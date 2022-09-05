@@ -1,44 +1,110 @@
-use cursive::align::HAlign;
+use cursive::event::Event;
 use cursive::event::EventResult;
-use cursive::event::{Event, Key};
-use cursive::view::scroll::Scroller;
-use cursive::view::*;
-use cursive::views::BoxedView;
+use cursive::reexports::time::Time;
+
 use cursive::views::TextView;
 use cursive::views::*;
 use cursive::Cursive;
-use cursive::CursiveExt;
 use cursive::With;
-use log;
 
+use chrono::prelude::*;
+use std::collections::BTreeMap;
+use std::error::Error;
+
+use ansi_term::Colour::Red;
+use memmap::Mmap;
 use memmap::MmapOptions;
 use std::fs::File;
-use std::io::Write;
 
-fn main() {
-    let mut cursive = Cursive::new();
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct LineNo(i64);
 
-    /*
-    siv.add_layer(TextView::new("Hello World!\nPress q to quit."));
+struct Page {
+    start_time: DateTime<Utc>,
+}
 
-    siv.add_global_callback('q', |s| s.quit());
+fn find_start_line_pct(mmap: &Mmap, pct: usize) -> usize {
+    if pct == 0 {
+        return 0;
+    }
+    find_line_starting_before(mmap, mmap.len() / pct)
+}
 
-    siv.run();
-    */
+const PG_SIZE: usize = 4096;
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct PageNo(pub usize);
 
-    // Read some long text from a file.
-    let content = "This is my really long text
-    it goes here
-    it is reather larg
-    l
-    o
-    ol
-    hi lol 1234
-    23232
-    ";
+impl PageNo {
+    pub fn new(byte_offset: usize) -> Self {
+        Self(byte_offset / PG_SIZE)
+    }
+    fn as_byte_offset(&self) -> usize {
+        self.0 * PG_SIZE
+    }
+}
+
+type PageTable = BTreeMap<PageNo, Page>;
+
+fn find_line_starting_before(mmap: &Mmap, byte_offset: usize) -> usize {
+    // mmap[0..byte_offset].iter().rev().find('\n').unwrap_or(0)
+    let bytes_before_offset_of_newline = mmap[0..byte_offset]
+        .iter()
+        .rev()
+        .enumerate()
+        .find_map(|(index, val)| match val {
+            val if *val == ('\n' as u8) => Some(index),
+            _ => None,
+        })
+        .unwrap_or(byte_offset);
+    return byte_offset - bytes_before_offset_of_newline;
+}
+
+fn init_page_for_offset(page_table: &mut PageTable, mmap: &Mmap, offset: usize) {
+    // let offset = offset - (offset % PG_SIZE);
+    let pgno = PageNo::new(offset);
+    if page_table.contains_key(&pgno) {
+        return;
+    }
+    let start_offset = find_line_starting_before(mmap, pgno.as_byte_offset());
+    let s = std::str::from_utf8(&mmap[start_offset..start_offset + 100]).unwrap();
+    let second_space_idx = s
+        .char_indices()
+        .filter_map(|(index, char)| match char == ' ' {
+            true => Some(index),
+            false => None,
+        })
+        .nth(1)
+        .unwrap();
+    let s = &s[0..second_space_idx];
+    eprintln!("Parsing: {}", s);
+    // match dateparser::parse(std::str::from_utf8(&s).unwrap()) {
+    match dateparser::parse(s) {
+        Ok(dt) => page_table.insert(pgno, Page { start_time: dt }),
+        _ => panic!(),
+    };
+}
+
+fn load_initial_pages(page_table: &mut PageTable, mmap: &Mmap) {
+    init_page_for_offset(page_table, mmap, 0);
+    init_page_for_offset(page_table, mmap, mmap.len());
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let _cursive = Cursive::new();
+
+    let filename = std::env::args().nth(1).unwrap();
+
+    let file = File::open(filename).unwrap();
+    let mmap = unsafe { MmapOptions::new().map(&file).unwrap() };
+    // assert_eq!(b"# memmap", &mmap[0..8]);
 
     // Initialize the cursive logger.
     cursive::logger::init();
+    let mut page_table = BTreeMap::new();
+    load_initial_pages(&mut page_table, &mmap);
+
+    // TODO Parse first page, parse last page.
+    // page_table.insert(0, Page {start_time : NaiveDateTime::new()});
 
     /*
     // Use some logging macros from the `log` crate.
@@ -46,17 +112,6 @@ fn main() {
     log::warn!("Or did it?");
     log::debug!("Logger initialized.");
     log::info!("Starting!");
-
-    let mut siv = cursive::default();
-    siv.add_layer(cursive::views::Dialog::text(
-        "Press ~ to open the console.\nPress l to generate logs.\nPress q to quit.",
-    ));
-    siv.add_global_callback('q', cursive::Cursive::quit);
-    siv.add_global_callback('~', cursive::Cursive::toggle_debug_console);
-
-    siv.add_global_callback('l', |_| log::trace!("Wooo"));
-
-    siv.run();
     */
 
     let mut siv = cursive::default();
@@ -65,46 +120,18 @@ fn main() {
     siv.add_global_callback('q', |s| s.quit());
 
     siv.add_fullscreen_layer(
-        TextView::new(content)
+        TextView::new("hello")
             .wrap_with(OnEventView::new)
-            .on_pre_event_inner(Event::Char('x'), |v, _| {
-                v.set_content("new content");
+            .on_pre_event_inner(Event::Char('x'), move |v, _| {
+                v.set_content(Red.paint(std::str::from_utf8(&mmap).unwrap()).to_string());
+                Some(EventResult::Consumed(None))
+            })
+            .on_pre_event_inner(Event::Char('y'), move |v, _| {
+                v.set_content("hello");
                 Some(EventResult::Consumed(None))
             }),
     );
 
-    /*
-    // The text is too long to fit on a line, so the view will wrap lines,
-    // and will adapt to the terminal size.
-    siv.add_fullscreen_layer(
-        Dialog::around((TextView::new(content)
-            .scrollable()
-            .wrap_with(OnEventView::new)
-            .on_pre_event_inner(Key::PageUp, |v, _| {
-                let scroller = v.get_scroller_mut();
-                if scroller.can_scroll_up() {
-                    scroller.scroll_up(scroller.last_outer_size().y.saturating_sub(1));
-                }
-                Some(EventResult::Consumed(None))
-            })
-            .on_pre_event_inner(Key::PageDown, |v, _| {
-                let scroller = v.get_scroller_mut();
-                if scroller.can_scroll_down() {
-                    scroller.scroll_down(scroller.last_outer_size().y.saturating_sub(1));
-                }
-                Some(EventResult::Consumed(None))
-            })))
-        .title("Unicode and wide-character support")
-        // This is the alignment for the button
-        .h_align(HAlign::Center)
-        .button("Quit", |s| s.quit()),
-    );
-    // Show a popup on top of the view.
-    siv.add_layer(Dialog::info(
-        "Try resizing the terminal!\n(Press 'q' to \
-         quit when you're done.)",
-    ));
-    */
-
     siv.run();
+    Ok(())
 }
