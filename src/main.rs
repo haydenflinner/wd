@@ -15,6 +15,7 @@ use ansi_term::Colour::Red;
 use memmap::Mmap;
 use memmap::MmapOptions;
 use std::fs::File;
+use unicode_width::UnicodeWidthStr; // To get the width of some text.
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct LineNo(i64);
@@ -96,6 +97,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let file = File::open(filename).unwrap();
     let mmap = unsafe { MmapOptions::new().map(&file).unwrap() };
+    let mut cursor: usize = 0;
     // assert_eq!(b"# memmap", &mmap[0..8]);
 
     // Initialize the cursive logger.
@@ -119,6 +121,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // We can quit by pressing q
     siv.add_global_callback('q', |s| s.quit());
 
+    /*/
     siv.add_fullscreen_layer(
         TextView::new("hello")
             .wrap_with(OnEventView::new)
@@ -130,6 +133,18 @@ fn main() -> Result<(), Box<dyn Error>> {
                 v.set_content("hello");
                 Some(EventResult::Consumed(None))
             }),
+    );
+    */
+    // let state = String::from("hello");
+    /* */
+    let state: String = Red.paint("hello").to_string();
+    siv.add_fullscreen_layer(
+        Canvas::new(state)
+            .with_draw(|text: &String, printer| {
+                eprintln!("Printing: {}", text);
+                printer.print((0, 0), &Red.paint(text).to_string());
+            })
+            .with_required_size(|text, _constraints| (text.width(), 1).into()),
     );
 
     siv.run();
