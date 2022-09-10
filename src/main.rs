@@ -3,6 +3,7 @@
 
 use cursive::event::Event;
 use cursive::event::EventResult;
+use cursive::menu;
 use cursive::reexports::time::Time;
 
 use cursive::view::Nameable;
@@ -156,7 +157,7 @@ impl App {
     }
 
     fn prev_line(&mut self) {
-        self.cursor = find_line_starting_before(&self.mmap, self.cursor);
+        self.cursor = find_line_starting_before(&self.mmap, self.cursor.saturating_sub(1));
     }
 
     fn goto_begin(&mut self) {
@@ -332,21 +333,61 @@ fn main() -> Result<(), Box<dyn Error>> {
     let text = "tv";
 
     let j_app = app.clone();
+    let b_app = app.clone();
     let a_app = app.clone();
+    let g_app = app.clone();
+    let G_app = app.clone();
 
+    // https://github.com/gyscos/cursive/blob/main/doc/tutorial_3.md
+    // Maybe can use with_user_data now! Write a tutorial_4 for this once done?
+    // Next steps:
+    //   0. Fix out the UI that I want, then can hook it up to functionality later?
+    //   1. menu for go-to-time
+    //   2. Out-filters with menu to edit them. See lnav for fast impl;
+    //      Guessing we can just only apply the filters to the screen view;
+    //      TODO this will go in app and require support for no results!
+    //   2. someday, handle wraparound / running multiple days.
+    //   3. Time view, i.e. 
+    //   4. "." to repeat last cmd
+    //   5. Named regex capture => color-coding / ts parsing
+    //   6. Multi-line log entries, or just skip lines that we can't parse timestamps from.
+
+    siv.menubar()
+        .add_subtree(
+            "File",
+            menu::Tree::new()
+                .leaf("New", |s| {
+                    s.add_layer(Dialog::info("New file screen!"));
+                })
+        );
+    siv.set_autohide_menu(false);
     siv.add_fullscreen_layer(
         TextView::new(a_app.borrow().get_view().clone()).with_name(text)
         .wrap_with(OnEventView::new)
         .on_event(Event::Char('j'), move|siv| {
-            /*
-            siv.with_user_data(|app: &mut App| {
-                // Failed experiment, give up and accept rcs for now :'[
-                app.next_line();
-                siv.call_on_name(text, |t: &mut TextView| { t.set_content(app.get_view()); });
-            });
-            */
             j_app.borrow_mut().next_line();
             siv.call_on_name(text, |t: &mut TextView| { t.set_content(j_app.borrow_mut().get_view()); });
+        })
+        .on_event(Event::Char('k'), move|siv| {
+            b_app.borrow_mut().prev_line();
+            siv.call_on_name(text, |t: &mut TextView| { t.set_content(b_app.borrow_mut().get_view()); });
+        })
+        .on_event(Event::Char('g'), move|siv| {
+            g_app.borrow_mut().goto_begin();
+            siv.call_on_name(text, |t: &mut TextView| { t.set_content(g_app.borrow_mut().get_view()); });
+        })
+        .on_event(Event::Char('G'), move|siv| {
+            G_app.borrow_mut().goto_end();
+            siv.call_on_name(text, |t: &mut TextView| { t.set_content(G_app.borrow_mut().get_view()); });
+        })
+        .on_event(Event::Char('h'), |siv| {
+            siv.add_layer(
+                Dialog::around(TextView::new("hello!")).title("lmao") // .with_name("di").get_mut()
+                    .button("custom", |s| {s.pop_layer();})
+                    .dismiss_button("Done")
+                    // .button("Back", |s| s.call_on_name("di", |x| { x.cl})
+                    .wrap_with(CircularFocus::new)
+                    .wrap_tab());
         })
         // .on_pre_event_inner(Event::Char('x'), |v, c| {
         //     v.set_content(cursive::utils::markup::ansi::parse(
