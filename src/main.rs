@@ -1,15 +1,23 @@
+#![allow(unused_imports)]
+#![allow(dead_code)]
+
 use cursive::event::Event;
 use cursive::event::EventResult;
 use cursive::reexports::time::Time;
 
+use cursive::view::Nameable;
 use cursive::views::TextView;
 use cursive::views::*;
 use cursive::Cursive;
 use cursive::With;
 
 use chrono::prelude::*;
+use log::debug;
+use std::cell::RefCell;
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::error::Error;
+use std::rc::Rc;
 
 use ansi_term::Colour::Purple;
 use memmap::Mmap;
@@ -20,6 +28,13 @@ use unicode_width::UnicodeWidthStr; // To get the width of some text.
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct LineNo(i64);
+
+#[cfg(not(test))] 
+use log::{info, warn}; // Use log crate when building application
+ 
+#[cfg(test)]
+use std::{println as info, println as warn}; // Workaround to use prinltn! for logs.
+
 
 struct Page {
     start_time: DateTime<Utc>,
@@ -47,9 +62,12 @@ impl PageNo {
 
 type PageTable = BTreeMap<PageNo, Page>;
 
-fn find_line_starting_before(mmap: &Mmap, byte_offset: usize) -> usize {
+/// Find first character of line starting at or before byte_offset.
+fn find_line_starting_before(s: &[u8], byte_offset: usize) -> usize {
     // mmap[0..byte_offset].iter().rev().find('\n').unwrap_or(0)
-    let bytes_before_offset_of_newline = mmap[0..byte_offset]
+    let bytes_before_offset_of_newline = 
+        // s[0..byte_offset]
+        s[..byte_offset]
         .iter()
         .rev()
         .enumerate()
@@ -58,10 +76,13 @@ fn find_line_starting_before(mmap: &Mmap, byte_offset: usize) -> usize {
             _ => None,
         })
         .unwrap_or(byte_offset);
-    return byte_offset - bytes_before_offset_of_newline;
+    // 4096 -> 3486 should find byte 10. TODO Unit test.
+    let idx = byte_offset - bytes_before_offset_of_newline;
+    assert!(idx == 0 || s[idx-1] == ('\n' as u8));
+    return idx;
 }
 
-fn parse_date_starting_at(s: &[u8], start_offset: usize) -> DateTime<Utc> {
+fn parse_date_starting_at(s: &[u8], start_offset: usize) -> Option<DateTime<Utc>> {
     // TODO .. need to use min or is that implicit like Python?
     let s = std::str::from_utf8(&s[start_offset..min(start_offset + 100, s.len())]).unwrap();
     let second_space_idx = s
@@ -73,12 +94,13 @@ fn parse_date_starting_at(s: &[u8], start_offset: usize) -> DateTime<Utc> {
         .nth(1)
         .unwrap();
     let s = &s[0..second_space_idx];
-    eprintln!("Parsing: {}", s);
+    debug!("Parsing: {}", s);
     // match dateparser::parse(std::str::from_utf8(&s).unwrap()) {
-    match dateparser::parse(s) {
+    /*match dateparser::parse(s) {
         Ok(dt) => dt,
         _ => panic!(),
-    }
+    }*/
+    dateparser::parse_with_timezone(s, &Utc).ok()
 }
 
 fn init_page_for_offset(page_table: &mut PageTable, mmap: &Mmap, offset: usize) {
@@ -91,7 +113,7 @@ fn init_page_for_offset(page_table: &mut PageTable, mmap: &Mmap, offset: usize) 
     page_table.insert(
         pgno,
         Page {
-            start_time: parse_date_starting_at(mmap, start_offset),
+            start_time: parse_date_starting_at(mmap, start_offset).expect("Should be able to parse datetime starting line"),
         },
     );
 }
@@ -103,23 +125,24 @@ fn get_view(mmap: &Mmap, offset: usize) {
 }
 */
 
-struct App<'a> {
-    mmap: &'a Mmap,
-    // current byte offset into mmapped file.
+struct App {
+    mmap: Mmap,
+    /// current byte offset into mmapped file.
     cursor: usize,
 }
 
 type FileOffset = usize;
 
-impl App<'_> {
+impl App {
     fn get_view(&self) -> &str {
-        std::str::from_utf8(&self.mmap[self.cursor..PG_SIZE * 4]).unwrap() // 4kb, TODO Could minimize this by knowing size of terminal+rows returned.
+        // 4kb, TODO Could minimize this by knowing size of terminal+rows returned.
+        std::str::from_utf8(&self.mmap[self.cursor..min(PG_SIZE * 4, self.mmap.len())]).unwrap()
     }
 
     fn next_line(&mut self) {
         // let bytes_til_newline = &mmap[cursor..cursor.PG_SIZE*4]
         let bytes_til_newline = self
-            .mmap
+            .mmap[self.cursor..self.mmap.len()]
             .iter()
             .enumerate()
             .find_map(|(index, val)| match val {
@@ -127,12 +150,13 @@ impl App<'_> {
                 _ => None,
             })
             .unwrap_or(0);
+        // assert!(self.mmap[byte_til_newline])
         let byte_after_newline = min(self.mmap.len(), self.cursor + bytes_til_newline + 1);
         self.cursor = byte_after_newline;
     }
 
     fn prev_line(&mut self) {
-        self.cursor = find_line_starting_before(self.mmap, self.cursor);
+        self.cursor = find_line_starting_before(&self.mmap, self.cursor);
     }
 
     fn goto_begin(&mut self) {
@@ -141,7 +165,11 @@ impl App<'_> {
 
     fn goto_end(&mut self) {
         // TODO Just set cursor to mmap.len()? Does cursor really need to be at beginning of valid line always?
-        self.cursor = find_line_starting_before(self.mmap, self.mmap.len());
+        self.cursor = find_line_starting_before(&self.mmap, self.mmap.len());
+    }
+
+    fn goto(&mut self, line_idx: usize) {
+        self.cursor = find_line_starting_before(&self.mmap, line_idx);
     }
 }
 
@@ -152,7 +180,7 @@ struct NavHandler<'a> {
 
 impl NavHandler<'_> {
     fn new(mmap: &Mmap) -> NavHandler {
-        let nh = NavHandler {
+        let mut nh = NavHandler {
             mmap,
             pt: PageTable::new(),
         };
@@ -181,35 +209,93 @@ impl NavHandler<'_> {
 
         // TODO Check pt cache here. Store the spot that we should insert page table entries that we find.
         // Or maybe even a starting point, although frankly it's pointless.
-        let spot = bin_search_file(self.mmap, spec, s.len() / 2);
+        let spot = bin_search(self.mmap, spec);
     }
 }
 
+#[derive(Debug)]
 enum TsBinSearchError {
     FailedParseTs,
 }
 
 // fn bin_search_file(s: &[u8], dt: &DateTime<Utc>) {
-fn bin_search_file_helper(
-    s: &[u8],
-    dt: &DateTime<Utc>,
-    byte_offset: usize,
-) -> Result<FileOffset, TsBinSearchError> {
-    let line_start = find_line_starting_before(&s, byte_offset);
-    let found_dt = parse_date_starting_at(s, line_start);
-    if line_start == 0 {
-        return Ok(byte_offset);
-    }
-    // TODO assumption here that every newline starts with a timestamp.
-    // Should be resilient to multiline-logs, maybe search back a whole few mb or so looking for the prev timestamp.
-    // Algo: go left/right until we can't anymore, by comparing the byte idx of ideal move point vs prev newline.
+fn bin_search(s: &[u8], dt: &DateTime<Utc>) -> Result<FileOffset, TsBinSearchError> {
+    let mut low: usize = 0;
+    let mut high: usize = s.len() - 1;
+    let mut middle = 0;
 
-    match cmp.compare(dt, found_dt) {
-        Less => x,    // Found is after, go left
-        Equal => y,   // Wow, what a guess lol
-        Greater => z, // Found is before, go right.
+    while low <= high {
+        middle = (high + low) / 2;
+        info!("Bin search: low: {}, mid: {}, high: {}", low, middle, high);
+        match find_line_starting_before(&s, middle) {
+            // i if i <= low => return Ok(i), // Previous line begins before our search area.
+            line_i => {
+                let ts = parse_date_starting_at(s, line_i);
+                match ts {
+                    Some(ts) => {
+                        info!("Comparing tses {} and {}", ts, dt);
+                        match ts.cmp(dt) {
+                            Ordering::Less => low = middle + 1,
+                            Ordering::Equal => return Ok(line_i), // lucky guess!
+                            Ordering::Greater => {
+                                if middle == 0 {
+                                    return Ok(0);
+                                }
+                                high = middle - 1
+                            }
+                        }
+                    }
+                    None => return Err(TsBinSearchError::FailedParseTs), // TODO head to previous line and look for timestamp!
+                }
+            }
+        }
+    }
+    return Ok(middle);
+}
+
+#[cfg(test)]
+mod tests {
+    // Note this useful idiom: importing names from outer (for mod tests) scope.
+    use super::*;
+        static LINES: &str = "03/22/2022 08:51:06 INFO   :...mylogline
+03/22/2022 08:51:08 INFO   :...mylogline";
+ 
+    #[test]
+    fn test_first() {
+        assert_eq!(bin_search(LINES.as_bytes(), 
+            &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:06Z").unwrap().with_timezone(&Utc)).unwrap(),
+        0);
+    }
+
+    #[test]
+    fn test_second() {
+        assert_eq!(bin_search(LINES.as_bytes(), 
+            &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:08Z").unwrap().with_timezone(&Utc)).unwrap(),
+        41);
+    }
+
+    #[test]
+    fn test_between() {
+        assert_eq!(bin_search(LINES.as_bytes(), 
+            &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:07Z").unwrap().with_timezone(&Utc)).unwrap(),
+        41);
+    }
+
+    #[test]
+    fn test_after() {
+        assert_eq!(bin_search(LINES.as_bytes(), 
+            &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:09Z").unwrap().with_timezone(&Utc)).unwrap(),
+        80);
+    }
+
+    #[test]
+    fn test_before() {
+        assert_eq!(bin_search(LINES.as_bytes(), 
+            &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:00Z").unwrap().with_timezone(&Utc)).unwrap(),
+        0);
     }
 }
+
 
 /*/
 #[derive(Default)]
@@ -230,48 +316,53 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let file = File::open(filename).unwrap();
     let mmap = unsafe { MmapOptions::new().map(&file).unwrap() };
-    let mut cursor: usize = 0;
+    // let mut cursor: usize = 0;
+    // let mut app = App{ mmap: &mmap, cursor: 0};
+    let app = Rc::new(RefCell::new(App { mmap: mmap, cursor: 0}));
     // assert_eq!(b"# memmap", &mmap[0..8]);
 
     // Initialize the cursive logger.
     cursive::logger::init();
-    let mut page_table = BTreeMap::new();
-    load_initial_pages(&mut page_table, &mmap);
-
-    // TODO Parse first page, parse last page.
-    // page_table.insert(0, Page {start_time : NaiveDateTime::new()});
-
-    /*
-    // Use some logging macros from the `log` crate.
-    log::error!("Something serious probably happened!");
-    log::warn!("Or did it?");
-    log::debug!("Logger initialized.");
-    log::info!("Starting!");
-    */
+    // let mut page_table = BTreeMap::new();
+    // load_initial_pages(&mut page_table, mmap);
 
     let mut siv = cursive::default();
 
-    let viewsize = PG_SIZE * 4; // 16kb
-                                // We can quit by pressing q
     siv.add_global_callback('q', |s| s.quit());
+    let text = "tv";
+
+    let j_app = app.clone();
+    let a_app = app.clone();
 
     siv.add_fullscreen_layer(
-        TextView::new(cursive::utils::markup::ansi::parse(
-            Purple.paint("hello").to_string(),
-        ))
+        TextView::new(a_app.borrow().get_view().clone()).with_name(text)
         .wrap_with(OnEventView::new)
-        .on_pre_event_inner(Event::Char('x'), move |v, _| {
-            v.set_content(cursive::utils::markup::ansi::parse(
-                Purple
-                    .paint(std::str::from_utf8(&mmap[byte_offset..byte_offset + viewsize]).unwrap())
-                    .to_string(),
-            ));
-            Some(EventResult::Consumed(None))
+        .on_event(Event::Char('j'), move|siv| {
+            /*
+            siv.with_user_data(|app: &mut App| {
+                // Failed experiment, give up and accept rcs for now :'[
+                app.next_line();
+                siv.call_on_name(text, |t: &mut TextView| { t.set_content(app.get_view()); });
+            });
+            */
+            j_app.borrow_mut().next_line();
+            siv.call_on_name(text, |t: &mut TextView| { t.set_content(j_app.borrow_mut().get_view()); });
         })
-        .on_pre_event_inner(Event::Char('y'), move |v, _| {
-            v.set_content("hello");
-            Some(EventResult::Consumed(None))
-        }),
+        // .on_pre_event_inner(Event::Char('x'), |v, c| {
+        //     v.set_content(cursive::utils::markup::ansi::parse(
+        //         Purple
+        //             .paint(std::str::from_utf8(&mmap[..]).unwrap())
+        //             .to_string(),
+        //     ));
+        //     // Some(EventResult::Consumed(None))
+        //     return Some(EventResult::with_cb(|cb: &mut Cursive | { cb.with_user_data(
+        //         |state: &mut App| { state.next_line(); }
+        //     ); }));
+        // })
+        // .on_pre_event_inner(Event::Char('y'), |v, _| {
+        //     v.set_content("hello");
+        //     Some(EventResult::Consumed(None))
+        // }),
     );
     // let state = String::from("hello");
     /* */
