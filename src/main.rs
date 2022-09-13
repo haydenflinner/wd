@@ -1,16 +1,20 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
+use cursive::align::HAlign;
 use cursive::event::Event;
 use cursive::event::EventResult;
+use cursive::event::Key;
 use cursive::menu;
 use cursive::reexports::time::Time;
 
 use cursive::view::Nameable;
+use cursive::view::Resizable;
 use cursive::views::TextView;
 use cursive::views::*;
 use cursive::Cursive;
 use cursive::With;
+use cursive::theme::{BaseColor, BorderStyle, Color, ColorStyle, Palette};
 
 use chrono::prelude::*;
 use log::debug;
@@ -189,9 +193,9 @@ impl NavHandler<'_> {
         nh
     }
 
-    fn goto(self, spec: &str) {
-        todo!();
-    }
+    // fn goto(self, spec: &str) {
+    //     todo!();
+    // }
 
     fn goto_time(self, spec: &DateTime<Utc>) {
         // Walk the page table, populating entries as needed to find the right page.
@@ -210,7 +214,8 @@ impl NavHandler<'_> {
 
         // TODO Check pt cache here. Store the spot that we should insert page table entries that we find.
         // Or maybe even a starting point, although frankly it's pointless.
-        let spot = bin_search(self.mmap, spec);
+        // TODO mvp: just need goto time! And maye a little bit of polish on the color scheme! Then can add everything else over time!
+        let _spot = bin_search(self.mmap, spec);
     }
 }
 
@@ -329,6 +334,23 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut siv = cursive::default();
 
+    //     siv.set_theme(cursive::theme::Theme {
+    //     shadow: true,
+    //     borders: BorderStyle::Simple,
+    //     palette: Palette::default().with(|palette| {
+    //         use cursive::theme::BaseColor::*;
+    //         use cursive::theme::Color::*;
+    //         use cursive::theme::PaletteColor::*;
+
+    //         palette[Background] = TerminalDefault;
+    //         palette[View] = TerminalDefault;
+    //         palette[Primary] = White.dark();
+    //         palette[TitlePrimary] = Blue.light();
+    //         palette[Secondary] = Blue.light();
+    //         palette[Highlight] = Blue.dark();
+    //     }),
+    // });
+
     siv.add_global_callback('q', |s| s.quit());
     let text = "tv";
 
@@ -336,7 +358,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let b_app = app.clone();
     let a_app = app.clone();
     let g_app = app.clone();
-    let G_app = app.clone();
+    let gg_app = app.clone();
 
     // https://github.com/gyscos/cursive/blob/main/doc/tutorial_3.md
     // Maybe can use with_user_data now! Write a tutorial_4 for this once done?
@@ -373,14 +395,33 @@ fn main() -> Result<(), Box<dyn Error>> {
             siv.call_on_name(text, |t: &mut TextView| { t.set_content(b_app.borrow_mut().get_view()); });
         })
         .on_event(Event::Char('g'), move|siv| {
-            g_app.borrow_mut().goto_begin();
-            siv.call_on_name(text, |t: &mut TextView| { t.set_content(g_app.borrow_mut().get_view()); });
+            // g_app.borrow_mut().goto_begin();
+            // siv.call_on_name(text, |t: &mut TextView| { t.set_content(g_app.borrow_mut().get_view()); });
+            // g for goto. Type in exact or relative?
+            siv.add_layer(
+                Dialog::around(
+                LinearLayout::vertical()
+                    .child(DummyView.fixed_height(1))
+                    .child(TextView::new("Enter time-spec").h_align(HAlign::Center))
+                    .child(EditView::new()
+                    .with_name("username").fixed_width(20))
+                    .child(TextView::new("example: 16:44:21"))
+                    .child(TextView::new("example: +1s"))
+                    .child(TextView::new("example: 40%"))
+                    .child(DummyView.fixed_height(1))
+                    .child(TextView::new("Enter Channel").h_align(HAlign::Center))
+                    .child(EditView::new().with_name("channel").fixed_width(20)),
+                ).title("goto")
+                .button("enter", |s| { s.pop_layer(); })
+                .wrap_with(OnEventView::new).on_event(Event::Key(Key::Enter), move|siv| { siv.pop_layer(); })
+            );
         })
         .on_event(Event::Char('G'), move|siv| {
-            G_app.borrow_mut().goto_end();
-            siv.call_on_name(text, |t: &mut TextView| { t.set_content(G_app.borrow_mut().get_view()); });
+            gg_app.borrow_mut().goto_end();
+            siv.call_on_name(text, |t: &mut TextView| { t.set_content(gg_app.borrow_mut().get_view()); });
         })
         .on_event(Event::Char('h'), |siv| {
+            // TODO h for highlight
             siv.add_layer(
                 Dialog::around(TextView::new("hello!")).title("lmao") // .with_name("di").get_mut()
                     .button("custom", |s| {s.pop_layer();})
