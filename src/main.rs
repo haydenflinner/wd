@@ -30,6 +30,10 @@ use memmap::MmapOptions;
 use std::cmp::min;
 use std::fs::File;
 use unicode_width::UnicodeWidthStr; // To get the width of some text.
+use cursive::utils::markup::{StyledString,StyledIndexedSpan};
+use cursive::utils::span::IndexedCow;
+
+use regex::Regex;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct LineNo(i64);
@@ -130,6 +134,38 @@ fn get_view(mmap: &Mmap, offset: usize) {
 }
 */
 
+/// TODO Convert this to parse logs. Let's just hardcode how to do it for now.
+/// One, highlight WARN/INFO/etc with colors.
+/// Two, highlight search results background.
+/// Take spans of search results in buffer for use?
+/// Parse text using a syntect highlighter.
+// For finding matches:
+// https://docs.rs/grep-searcher/latest/grep_searcher/struct.SinkMatch.html
+// https://docs.rs/grep-searcher/0.1.8/grep_searcher/index.html
+// ONly thing to check is what happens with wrapping/overlapping spans. Anything?
+/*/
+pub fn parse<S: Into<String>>(
+    input: S,
+    highlighter: &mut syntect::easy::HighlightLines,
+    syntax_set: &syntect::parsing::SyntaxSet,
+) -> Result<StyledString, syntect::Error> {
+    let input = input.into();
+    let mut spans = Vec::new();
+
+    for line in input.split_inclusive('\n') {
+        for (style, text) in highlighter.highlight_line(line, syntax_set)? {
+            spans.push(StyledIndexedSpan {
+                content: IndexedCow::from_str(text, &input),
+                attr: translate_style(style),
+                width: text.width(),
+            });
+        }
+    }
+
+    Ok(StyledString::with_spans(input, spans))
+}
+*/
+
 struct App {
     mmap: Mmap,
     /// current byte offset into mmapped file.
@@ -215,6 +251,7 @@ impl NavHandler<'_> {
         // TODO Check pt cache here. Store the spot that we should insert page table entries that we find.
         // Or maybe even a starting point, although frankly it's pointless.
         // TODO mvp: just need goto time! And maye a little bit of polish on the color scheme! Then can add everything else over time!
+        // TODO highlighting logs with regex / capturing groups.
         let _spot = bin_search(self.mmap, spec);
     }
 }
@@ -300,6 +337,14 @@ mod tests {
             &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:00Z").unwrap().with_timezone(&Utc)).unwrap(),
         0);
     }
+
+    #[test]
+    fn test_re() {
+        let re = Regex::new("[0-9]{3}-[0-9]{3}-[0-9]{4}").unwrap();
+        let mat = re.find("phone: 111-222-3333").unwrap();
+        // TODO Use this to highlight within the match. And to search next instance.
+        assert_eq!((mat.start(), mat.end()), (7, 19));
+    }
 }
 
 
@@ -316,7 +361,7 @@ fn load_initial_pages(page_table: &mut PageTable, mmap: &Mmap) {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let _cursive = Cursive::new();
+    // let _cursive = Cursive::new();
 
     let filename = std::env::args().nth(1).unwrap();
 
@@ -409,13 +454,67 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .child(TextView::new("example: +1s"))
                     .child(TextView::new("example: 40%"))
                     .child(DummyView.fixed_height(1))
-                    .child(TextView::new("Enter Channel").h_align(HAlign::Center))
-                    .child(EditView::new().with_name("channel").fixed_width(20)),
+                    // .child(TextView::new("Enter Channel").h_align(HAlign::Center))
+                    // .child(EditView::new().with_name("channel").fixed_width(20)),
                 ).title("goto")
                 .button("enter", |s| { s.pop_layer(); })
                 .wrap_with(OnEventView::new).on_event(Event::Key(Key::Enter), move|siv| { siv.pop_layer(); })
             );
         })
+        .on_event(Event::Char('/'), move|siv| {
+            // g_app.borrow_mut().goto_begin();
+            // siv.call_on_name(text, |t: &mut TextView| { t.set_content(g_app.borrow_mut().get_view()); });
+            // g for goto. Type in exact or relative?
+            siv.add_layer(
+                Dialog::around(
+                LinearLayout::vertical()
+                    .child(DummyView.fixed_height(1))
+                    .child(TextView::new("search term").h_align(HAlign::Center))
+                    .child(EditView::new()
+                    .with_name("username").fixed_width(20))
+                    .child(TextView::new(r"example: xyz12\d+"))
+                    // .child(TextView::new("example: +1s"))
+                    // .child(TextView::new("example: 40%"))
+                    .child(DummyView.fixed_height(1))
+                    // .child(TextView::new("Enter Channel").h_align(HAlign::Center))
+                    // .child(EditView::new().with_name("channel").fixed_width(20)),
+                ).title("search / find")
+                // TODO Make these not actually buttons but just text telling you what to do, same for all menues.
+                .button("cancel (esc)", |s| { s.pop_layer(); })
+                .button("enter", |s| { s.pop_layer(); })
+                .wrap_with(OnEventView::new).on_event(Event::Key(Key::Enter), move|siv| { siv.pop_layer(); })
+            );
+        })
+        .on_event(Event::Char('f'), move|siv| {
+            // g_app.borrow_mut().goto_begin();
+            // siv.call_on_name(text, |t: &mut TextView| { t.set_content(g_app.borrow_mut().get_view()); });
+            // g for goto. Type in exact or relative?
+            // TOML and yaml would allow writing regexes without escaping. As would a .py config file, actually...
+            // auto add last searched term to highlights unless ends with '.*'?
+            siv.add_layer(
+                Dialog::around(
+                    // TODO select within menu by pressing i or o (in / out), then skips to term-entry dialog if press those 2.
+                    // otherwise, this is a menu of the current filters, and can enable/disable by pressing space/enter?
+                    // Change-color of them by pressing c on them.
+                LinearLayout::vertical()
+                    .child(DummyView.fixed_height(1))
+                    .child(TextView::new("filter regex").h_align(HAlign::Center))
+                    .child(EditView::new()
+                    .with_name("username").fixed_width(20))
+                    .child(TextView::new(r"example: xyz12\d+"))
+                    // .child(TextView::new("example: +1s"))
+                    // .child(TextView::new("example: 40%"))
+                    .child(DummyView.fixed_height(1))
+                    // .child(TextView::new("Enter Channel").h_align(HAlign::Center))
+                    // .child(EditView::new().with_name("channel").fixed_width(20)),
+                ).title("search / find")
+                // TODO Make these not actually buttons but just text telling you what to do, same for all menues.
+                .button("cancel (esc)", |s| { s.pop_layer(); })
+                .button("enter", |s| { s.pop_layer(); })
+                .wrap_with(OnEventView::new).on_event(Event::Key(Key::Enter), move|siv| { siv.pop_layer(); })
+            );
+        })
+        // todo 'u' and 'd' half-screen scroll cmds from less? Definitely pgup and pgdown buttons.
         .on_event(Event::Char('G'), move|siv| {
             gg_app.borrow_mut().goto_end();
             siv.call_on_name(text, |t: &mut TextView| { t.set_content(gg_app.borrow_mut().get_view()); });
