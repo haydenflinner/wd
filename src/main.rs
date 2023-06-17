@@ -38,9 +38,9 @@ use regex::Regex;
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct LineNo(i64);
 
-#[cfg(not(test))] 
+#[cfg(not(test))]
 use log::{info, warn}; // Use log crate when building application
- 
+
 #[cfg(test)]
 use std::{println as info, println as warn}; // Workaround to use prinltn! for logs.
 
@@ -177,6 +177,8 @@ type FileOffset = usize;
 impl App {
     fn get_view(&self) -> &str {
         // 4kb, TODO Could minimize this by knowing size of terminal+rows returned.
+        // Also this re-validates as utf8 each redraw, who cares for now.
+        // std::str::from_utf8(&self.mmap[self.cursor..min(PG_SIZE * 4, self.mmap.len())]).unwrap().to_string()
         std::str::from_utf8(&self.mmap[self.cursor..min(PG_SIZE * 4, self.mmap.len())]).unwrap()
     }
 
@@ -194,6 +196,19 @@ impl App {
         // assert!(self.mmap[byte_til_newline])
         let byte_after_newline = min(self.mmap.len(), self.cursor + bytes_til_newline + 1);
         self.cursor = byte_after_newline;
+    }
+
+    fn goto_str(&mut self, cmd: &str) {
+        fn parse_int(input: &str) -> usize {
+            input[0..input.len()-1].parse().unwrap()
+        }
+        if cmd.contains('%') {
+            return self.goto_pct(parse_int(cmd));
+        }
+    }
+
+    fn goto_pct(&mut self, pct: usize) {
+        self.cursor = find_start_line_pct(&self.mmap, pct);
     }
 
     fn prev_line(&mut self) {
@@ -214,6 +229,9 @@ impl App {
     }
 }
 
+// Is this actually necessary vs the single page fault caused by actually pulling in the page?
+// Seems like a micro-optimizaito at this point.
+// Cache what it makes sense to cache ONCE WE HVE A WORKING APP.
 struct NavHandler<'a> {
     mmap: &'a Mmap,
     pt: PageTable,
@@ -370,6 +388,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // let mut cursor: usize = 0;
     // let mut app = App{ mmap: &mmap, cursor: 0};
     let app = Rc::new(RefCell::new(App { mmap: mmap, cursor: 0}));
+    // let bapp = App { mmap: mmap, cursor: 0};
     // assert_eq!(b"# memmap", &mmap[0..8]);
 
     // Initialize the cursive logger.
@@ -404,6 +423,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let a_app = app.clone();
     let g_app = app.clone();
     let gg_app = app.clone();
+    let app3 = app.clone();
 
     // https://github.com/gyscos/cursive/blob/main/doc/tutorial_3.md
     // Maybe can use with_user_data now! Write a tutorial_4 for this once done?
@@ -427,6 +447,23 @@ fn main() -> Result<(), Box<dyn Error>> {
                     s.add_layer(Dialog::info("New file screen!"));
                 })
         );
+    // siv.set_user_data(bapp);
+    /*fn ok (s: &mut Cursive, name: &str) {
+        s.call_on_name("tv", |t: &mut TextView| {
+
+            // app3.borrow_mut().goto_str(name);
+            s.with_user_data(|app| {
+                app.goto_str(name);
+            });
+            // t.set_content(app3.borrow_mut().get_view());
+            t.set_content(s.with_user_data(|app| { app.get_view() })); //.get_view());
+        });
+        s.pop_layer();
+    };
+    let ok_ref = Rc::new(RefCell::new(ok));
+    let ok1 = ok_ref.clone();
+    let ok2 = ok_ref.clone();
+    */
     siv.set_autohide_menu(false);
     siv.add_fullscreen_layer(
         TextView::new(a_app.borrow().get_view().clone()).with_name(text)
@@ -439,17 +476,37 @@ fn main() -> Result<(), Box<dyn Error>> {
             b_app.borrow_mut().prev_line();
             siv.call_on_name(text, |t: &mut TextView| { t.set_content(b_app.borrow_mut().get_view()); });
         })
-        .on_event(Event::Char('g'), move|siv| {
+        .on_event(Event::Char('g'), move |siv| {
             // g_app.borrow_mut().goto_begin();
             // siv.call_on_name(text, |t: &mut TextView| { t.set_content(g_app.borrow_mut().get_view()); });
             // g for goto. Type in exact or relative?
+            let app3 = app3.clone();
+            let app4 = app3.clone();
+            let app5 = g_app.clone(); // holy cow talk about annoying.
+            // but using set and with_user_data doesn't seem to be any better.
+            // these lifetimes SUCK
             siv.add_layer(
                 Dialog::around(
                 LinearLayout::vertical()
                     .child(DummyView.fixed_height(1))
-                    .child(TextView::new("Enter time-spec").h_align(HAlign::Center))
+                    .child(TextView::new("Enter goto-spec").h_align(HAlign::Center))
                     .child(EditView::new()
-                    .with_name("username").fixed_width(20))
+                           // .on_submit(Into::<Fn(&mut Cursive, &str) >::into(ok_ref.borrow_mut()))
+                           .on_submit(move |s: &mut Cursive, name: &str| {
+                               s.call_on_name("tv", |t: &mut TextView| {
+                                   app5.borrow_mut().goto_str(name);
+                                   //s.with_user_data(|app: &mut App| {
+                                       //app.goto_str(name);
+                                   //});
+                                   // t.set_content(s.with_user_data(|app: &mut App| { app.get_view() }).unwrap()); //.get_view());
+                                   t.set_content(app5.borrow_mut().get_view()); //.get_view());
+                               });
+                               s.pop_layer();
+                           })
+                           // ok1.borrow_mut())
+                           // .on_submit(ok)
+                    .with_name("username").fixed_width(20)
+                    )
                     .child(TextView::new("example: 16:44:21"))
                     .child(TextView::new("example: +1s"))
                     .child(TextView::new("example: 40%"))
@@ -457,7 +514,23 @@ fn main() -> Result<(), Box<dyn Error>> {
                     // .child(TextView::new("Enter Channel").h_align(HAlign::Center))
                     // .child(EditView::new().with_name("channel").fixed_width(20)),
                 ).title("goto")
-                .button("enter", |s| { s.pop_layer(); })
+                .button("enter", move |s| {
+                    let app4 = app4.clone();
+                    s.call_on_name("tv", |t: &mut TextView| {
+                        /*
+                        s.with_user_data(|app: &mut App| {
+                            app.goto_str("TODOgetview");
+                        });
+                        t.set_content(s.with_user_data(|app: &mut App| { app.get_view() }).unwrap()); //.get_view());
+                        lifetime issues, guh.
+                        */
+                        app4.borrow_mut().goto_str("TODOgetview");
+                        t.set_content(app3.borrow_mut().get_view());
+                    });
+                    s.pop_layer();
+                    // ok2.borrow_mut()(s, "dummy");
+                    // ok(s, "dummy");
+                })
                 .wrap_with(OnEventView::new).on_event(Event::Key(Key::Enter), move|siv| { siv.pop_layer(); })
             );
         })

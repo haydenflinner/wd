@@ -4,6 +4,14 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
+        /*{
+            "type": "bashdb",
+            "request": "launch",
+            "name": "Bash-Debug (hardcoded script name)",
+            "cwd": "${workspaceFolder}",
+            "program": "${workspaceFolder}/test.sh",
+            "terminalKind": "external",
+        },*/
         {
             "type": "lldb",
             "request": "launch",
@@ -20,12 +28,16 @@
                 }
             },
             "args": [
-                "hugefile.txt",
-                "<",
-                "/dev/null"
+                "hugefile.txt"
+                // "<",
+                // "/dev/null"
             ],
+            // "console": "integratedTerminal",
+            "terminal": "external",
+            "console": "externalTerminal",
             "env": {
-                "TERM": "xterm-256color"
+                // "TERM": "xterm-256color"
+                "RUST_BACKTRACE": "1",
             },
             "cwd": "${workspaceFolder}"
         },
@@ -33,6 +45,7 @@
             "type": "lldb",
             "request": "launch",
             "name": "Debug unit tests in executable 'wd'",
+            "console": "integratedTerminal",
             "cargo": {
                 "args": [
                     "test",
