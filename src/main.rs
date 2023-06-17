@@ -71,6 +71,22 @@ impl PageNo {
 
 type PageTable = BTreeMap<PageNo, Page>;
 
+
+// #[derive(Debug)]
+// enum Command {
+//     LineMove(LineMove),
+//     /// Can move the cursor within lines. Cache results for searches unlike `less`.
+//     SearchTerm(SearchTerm),
+//     FilterCmd(FilterCmd),
+//     /// Looks at all log-templates that are on-screen. Skips to next log-line that is from a different template.
+//     /// Note that this isn't strictly optimal if you have a couple of templates that alternate more than a screenful apart.
+//     /// Maybe we could be smarter and recognize that the autoskip cmd keeps getting issue while a majority of the
+//     /// templates present haven't changed. Or we could expose some controls for which are going to be skipped past.
+//     /// Press 't' to pull up template menu, then can filter in and out on these?
+//     /// Need to integrate with rdrain.
+//     AutoSkip,
+// }
+
 /// Find first character of line starting at or before byte_offset.
 fn find_line_starting_before(s: &[u8], byte_offset: usize) -> usize {
     // mmap[0..byte_offset].iter().rev().find('\n').unwrap_or(0)
@@ -168,82 +184,110 @@ pub fn parse<S: Into<String>>(
 
 struct App {
     mmap: Mmap,
-    /// current byte offset into mmapped file.
-    cursor: usize,
 }
 
 type FileOffset = usize;
 
 impl App {
-    fn get_view(&self) -> &str {
-        // 4kb, TODO Could minimize this by knowing size of terminal+rows returned.
-        // Also this re-validates as utf8 each redraw, who cares for now.
-        // std::str::from_utf8(&self.mmap[self.cursor..min(PG_SIZE * 4, self.mmap.len())]).unwrap().to_string()
-        std::str::from_utf8(&self.mmap[self.cursor..min(PG_SIZE * 4, self.mmap.len())]).unwrap()
-    }
-
-    fn next_line(&mut self) {
-        // let bytes_til_newline = &mmap[cursor..cursor.PG_SIZE*4]
-        let bytes_til_newline = self
-            .mmap[self.cursor..self.mmap.len()]
-            .iter()
-            .enumerate()
-            .find_map(|(index, val)| match val {
-                val if *val == ('\n' as u8) => Some(index),
-                _ => None,
-            })
-            .unwrap_or(0);
-        // assert!(self.mmap[byte_til_newline])
-        let byte_after_newline = min(self.mmap.len(), self.cursor + bytes_til_newline + 1);
-        self.cursor = byte_after_newline;
-    }
-
-    fn goto_str(&mut self, cmd: &str) {
-        fn parse_int(input: &str) -> usize {
-            input[0..input.len()-1].parse().unwrap()
-        }
-        if cmd.contains('%') {
-            return self.goto_pct(parse_int(cmd));
-        }
-    }
-
-    fn goto_pct(&mut self, pct: usize) {
-        self.cursor = find_start_line_pct(&self.mmap, pct);
-    }
-
-    fn prev_line(&mut self) {
-        self.cursor = find_line_starting_before(&self.mmap, self.cursor.saturating_sub(1));
-    }
-
-    fn goto_begin(&mut self) {
-        self.cursor = 0;
-    }
-
-    fn goto_end(&mut self) {
-        // TODO Just set cursor to mmap.len()? Does cursor really need to be at beginning of valid line always?
-        self.cursor = find_line_starting_before(&self.mmap, self.mmap.len());
-    }
-
-    fn goto(&mut self, line_idx: usize) {
-        self.cursor = find_line_starting_before(&self.mmap, line_idx);
-    }
 }
+
+struct Filter {
+    needle: String,
+    include: bool,
+}
+
+type Line = str;
+
+enum FilterResult {
+    Include,
+    Exclude,
+    Indifferent,
+}
+
+fn line_allowed(filter: &Filter, line: &Line) -> FilterResult {
+    if line.contains(&filter.needle) {
+        match filter.include {
+            true => return FilterResult::Include,
+            false => return FilterResult::Exclude
+        }
+    }
+    FilterResult::Indifferent
+}
+
+fn get_visible_lines<'a>(source: &'a str, filters: Vec<Filter>, rows: i32, cols: i32)
+  -> Vec<&Line> {
+    let mut used_rows = 0;
+    let mut used_cols = 0;
+    let mut line_start = 0;
+    let mut lines = Vec::with_capacity(1000);
+    let maybe_add_line = |lines: &mut Vec<&'a Line>, line: &'a str, used_rows: &mut i32| {
+        for filter in filters.iter() {
+            match line_allowed(filter, line) {
+                FilterResult::Exclude => {
+                    return;
+                }
+                FilterResult::Include => {
+                    lines.push(line);
+                    *used_rows += 1;
+                    return;
+                }
+                FilterResult::Indifferent => {}
+            }
+        }
+        lines.push(line);
+        *used_rows += 1;
+    };
+    // let b = source.as_bytes();
+    // Assumes always linewrap, one byte == one visible width char.
+    // while used_rows < rows && i < source.len() {
+    for (i, c) in source.char_indices() {
+        match c {
+            '\n' => {
+                maybe_add_line(&mut lines, &source[line_start..i], &mut used_rows);
+                line_start = i + 1;
+            },
+            _ => {
+                used_cols += 1;
+                if used_cols == cols {
+                    // No need to complete out the line atm, TODO.
+                    // Assumption, user will be filtering on something that at least fits in the screen when scrolling by.
+                    used_cols = 0;
+                    line_start = i + 1;
+                }
+            }
+        }
+        if used_rows == rows {
+            maybe_add_line(&mut lines, &source[line_start..i], &mut used_rows);
+            return lines;
+        }
+    }
+    return lines;
+}
+
+// TODO add coloring and highlighting.
+fn fmt_visible_lines(lines: Vec<&Line>) -> Vec<&Line> { lines }
 
 // Is this actually necessary vs the single page fault caused by actually pulling in the page?
 // Seems like a micro-optimizaito at this point.
 // Cache what it makes sense to cache ONCE WE HVE A WORKING APP.
 struct NavHandler<'a> {
     mmap: &'a Mmap,
-    pt: PageTable,
+    // pt: PageTable,
+    /// current byte offset into mmapped file.
+    byte_cursor: usize,
+    // virtual offset from byte cursor? or all apply raw to it?
+    filters: Vec<Filter>,
 }
 
 impl NavHandler<'_> {
     fn new(mmap: &Mmap) -> NavHandler {
-        let mut nh = NavHandler {
-            mmap,
-            pt: PageTable::new(),
+        let nh = NavHandler {
+            mmap: mmap,
+            // pt: PageTable::new(),
+            byte_cursor: 0,
+            filters: vec!(),
         };
-        load_initial_pages(&mut nh.pt, mmap);
+        // load_initial_pages(&mut nh.pt, mmap);
         nh
     }
 
@@ -271,6 +315,59 @@ impl NavHandler<'_> {
         // TODO mvp: just need goto time! And maye a little bit of polish on the color scheme! Then can add everything else over time!
         // TODO highlighting logs with regex / capturing groups.
         let _spot = bin_search(self.mmap, spec);
+    }
+
+    fn get_view(&self) -> &str {
+        // 4kb, TODO Could minimize this by knowing size of terminal+rows returned.
+        // Also this re-validates as utf8 each redraw, who cares for now.
+        // std::str::from_utf8(&self.mmap[self.byte_cursor..min(PG_SIZE * 4, self.mmap.len())]).unwrap().to_string()
+        std::str::from_utf8(&self.mmap[self.byte_cursor..min(PG_SIZE * 4, self.mmap.len())]).unwrap()
+    }
+
+    fn next_line(&mut self) {
+        // let bytes_til_newline = &mmap[cursor..cursor.PG_SIZE*4]
+        let bytes_til_newline = self
+            .mmap[self.byte_cursor..self.mmap.len()]
+            .iter()
+            .enumerate()
+            .find_map(|(index, val)| match val {
+                val if *val == ('\n' as u8) => Some(index),
+                _ => None,
+            })
+            .unwrap_or(0);
+        // assert!(self.mmap[byte_til_newline])
+        let byte_after_newline = min(self.mmap.len(), self.byte_cursor + bytes_til_newline + 1);
+        self.byte_cursor = byte_after_newline;
+    }
+
+    fn goto_str(&mut self, cmd: &str) {
+        fn parse_int(input: &str) -> usize {
+            input[0..input.len()-1].parse().unwrap()
+        }
+        if cmd.contains('%') {
+            return self.goto_pct(parse_int(cmd));
+        }
+    }
+
+    fn goto_pct(&mut self, pct: usize) {
+        self.byte_cursor = find_start_line_pct(&self.mmap, pct);
+    }
+
+    fn prev_line(&mut self) {
+        self.byte_cursor = find_line_starting_before(&self.mmap, self.byte_cursor.saturating_sub(1));
+    }
+
+    fn goto_begin(&mut self) {
+        self.byte_cursor = 0;
+    }
+
+    fn goto_end(&mut self) {
+        // TODO Just set cursor to mmap.len()? Does cursor really need to be at beginning of valid line always?
+        self.byte_cursor = find_line_starting_before(&self.mmap, self.mmap.len());
+    }
+
+    fn goto(&mut self, line_idx: usize) {
+        self.byte_cursor = find_line_starting_before(&self.mmap, line_idx);
     }
 }
 
@@ -379,12 +476,16 @@ fn load_initial_pages(page_table: &mut PageTable, mmap: &Mmap) {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // let _cursive = Cursive::new();
-
     let filename = std::env::args().nth(1).unwrap();
 
     let file = File::open(filename).unwrap();
     let mmap = unsafe { MmapOptions::new().map(&file).unwrap() };
+    let _nh = NavHandler::new(&mmap);
+    Ok(())
+}
+/*
+    // let _cursive = Cursive::new();
+
     // let mut cursor: usize = 0;
     // let mut app = App{ mmap: &mmap, cursor: 0};
     let app = Rc::new(RefCell::new(App { mmap: mmap, cursor: 0}));
@@ -634,4 +735,4 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     siv.run();
     Ok(())
-}
+}*/
