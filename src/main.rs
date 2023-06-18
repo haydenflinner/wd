@@ -11,10 +11,13 @@ struct Args {
   /// The tick rate to use
   #[arg(short, long, default_value_t = 5000)]
   tick_rate: u64,
+
+  #[arg(long)]
+  filename: String,
 }
 
-async fn tui_main(tick_rate: u64) -> Result<()> {
-  let mut app = App::new(tick_rate);
+async fn tui_main(tick_rate: u64, filename: String) -> Result<()> {
+  let mut app = App::new(tick_rate, filename);
   app.enter().await?;
   app.init().await?;
   app.run().await?;
@@ -32,7 +35,7 @@ fn main() -> Result<()> {
   match tokio::runtime::Builder::new_multi_thread()
     .enable_all()
     .build()?
-    .block_on(async { tui_main(args.tick_rate).await })
+    .block_on(async { tui_main(args.tick_rate, args.filename).await })
   {
     Ok(_) => std::process::exit(0),
     Err(e) => {

@@ -1,8 +1,11 @@
 use std::sync::Arc;
+use std::fs::File;
 
 use anyhow::{anyhow, Context, Result};
 use tokio::sync::Mutex;
 use tracing::debug;
+
+use memmap::{Mmap, MmapOptions};
 
 use crate::{
   action::{Action, ActionHandler},
@@ -19,11 +22,14 @@ pub struct App {
 }
 
 impl App {
-  pub fn new(tick_rate: u64) -> Self {
+  pub fn new(tick_rate: u64, filename: String) -> Self {
     let tui = Arc::new(Mutex::new(Tui::new().context(anyhow!("Unable to create TUI")).unwrap()));
     let events = EventHandler::new(tick_rate);
     let actions = ActionHandler::new();
-    let home = Arc::new(Mutex::new(Home::default()));
+    let file = File::open(filename).unwrap();
+    let mmap = unsafe { MmapOptions::new().map(&file).unwrap() };
+    let home = Arc::new(Mutex::new(Home::new(mmap)));
+
     Self { tui, events, actions, home }
   }
 

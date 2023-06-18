@@ -28,7 +28,6 @@ use ansi_term::Colour::Purple;
 use memmap::Mmap;
 use memmap::MmapOptions;
 use std::cmp::min;
-use std::fs::File;
 use unicode_width::UnicodeWidthStr; // To get the width of some text.
 use cursive::utils::markup::{StyledString,StyledIndexedSpan};
 use cursive::utils::span::IndexedCow;
@@ -190,82 +189,6 @@ type FileOffset = usize;
 
 impl App {
 }
-
-struct Filter {
-    needle: String,
-    include: bool,
-}
-
-type Line = str;
-
-enum FilterResult {
-    Include,
-    Exclude,
-    Indifferent,
-}
-
-fn line_allowed(filter: &Filter, line: &Line) -> FilterResult {
-    if line.contains(&filter.needle) {
-        match filter.include {
-            true => return FilterResult::Include,
-            false => return FilterResult::Exclude
-        }
-    }
-    FilterResult::Indifferent
-}
-
-fn get_visible_lines<'a>(source: &'a str, filters: Vec<Filter>, rows: i32, cols: i32)
-  -> Vec<&Line> {
-    let mut used_rows = 0;
-    let mut used_cols = 0;
-    let mut line_start = 0;
-    let mut lines = Vec::with_capacity(1000);
-    let maybe_add_line = |lines: &mut Vec<&'a Line>, line: &'a str, used_rows: &mut i32| {
-        for filter in filters.iter() {
-            match line_allowed(filter, line) {
-                FilterResult::Exclude => {
-                    return;
-                }
-                FilterResult::Include => {
-                    lines.push(line);
-                    *used_rows += 1;
-                    return;
-                }
-                FilterResult::Indifferent => {}
-            }
-        }
-        lines.push(line);
-        *used_rows += 1;
-    };
-    // let b = source.as_bytes();
-    // Assumes always linewrap, one byte == one visible width char.
-    // while used_rows < rows && i < source.len() {
-    for (i, c) in source.char_indices() {
-        match c {
-            '\n' => {
-                maybe_add_line(&mut lines, &source[line_start..i], &mut used_rows);
-                line_start = i + 1;
-            },
-            _ => {
-                used_cols += 1;
-                if used_cols == cols {
-                    // No need to complete out the line atm, TODO.
-                    // Assumption, user will be filtering on something that at least fits in the screen when scrolling by.
-                    used_cols = 0;
-                    line_start = i + 1;
-                }
-            }
-        }
-        if used_rows == rows {
-            maybe_add_line(&mut lines, &source[line_start..i], &mut used_rows);
-            return lines;
-        }
-    }
-    return lines;
-}
-
-// TODO add coloring and highlighting.
-fn fmt_visible_lines(lines: Vec<&Line>) -> Vec<&Line> { lines }
 
 // Is this actually necessary vs the single page fault caused by actually pulling in the page?
 // Seems like a micro-optimizaito at this point.

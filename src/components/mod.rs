@@ -13,6 +13,8 @@ use crate::{
 
 pub mod home;
 pub mod logger;
+pub mod filter_screen;
+pub mod text_entry;
 
 pub trait Component {
   fn init(&mut self) -> Result<()> {

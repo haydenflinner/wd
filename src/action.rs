@@ -1,7 +1,15 @@
 use anyhow::{anyhow, Context, Result};
+use env_logger::filter::Filter;
 use futures::{FutureExt, StreamExt};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilterListAction {
+  NextItem,
+  PrevItem,
+  CloseList,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
@@ -11,6 +19,12 @@ pub enum Action {
   ToggleShowLogger,
   IncrementCounter,
   DecrementCounter,
+
+  FilterListAction(FilterListAction),
+
+  OpenTextEntry,
+  CloseTextEntry,
+
   Noop,
 }
 
