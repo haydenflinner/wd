@@ -42,7 +42,7 @@ impl<'a> Component for TextEntry<'a> {
     match action {
       Action::TextEntry(key) => {
         self.textarea.input(key);
-        info!("Received: {:?}", action);
+        // info!("Received: {:?}", action);
       }
       _ => {}
     }

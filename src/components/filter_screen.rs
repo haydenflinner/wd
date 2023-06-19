@@ -74,6 +74,7 @@ impl Component for FilterScreen<'_> {
     // reverse the direction
     let next = Some(if curr == 0 { self.items.len() } else { curr - 1 });
     let prev = Some(if curr == self.items.len() { 0 } else { curr + 1});
+    let mut close_filters = false;
     match action {
       Action::FilterListAction(fa) => {
         match fa {
@@ -83,7 +84,7 @@ impl Component for FilterScreen<'_> {
             FilterListAction::OpenFilterScreen => unimplemented!(),
             FilterListAction::CloseList => unimplemented!(),
             FilterListAction::CloseNew => { self.new_filter_type = None; self.new.textarea.delete_line_by_head(); },
-            FilterListAction::ConfirmNew => self.confirm_new_filter(),
+            FilterListAction::ConfirmNew => {self.confirm_new_filter(); close_filters = true; },
             /*FilterListAction::TextEntry(_) => {
               let o = self.new.dispatch(action);
               assert_eq!(o, None);
@@ -95,7 +96,11 @@ impl Component for FilterScreen<'_> {
       }
       _ => (),
     }
-    None
+    if close_filters {
+      Some(Action::FilterListAction(FilterListAction::CloseList))
+    } else {
+      None
+    }
   }
 
   fn render(&mut self, f: &mut Frame<'_>, rect: Rect) {

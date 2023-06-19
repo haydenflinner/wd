@@ -84,7 +84,8 @@ pub enum Action {
   Primeg,
 
   ToggleShowLogger,
-
+  BeginSearch,
+  RepeatSearch(Direction),
 
   FilterListAction(FilterListAction),
 

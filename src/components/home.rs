@@ -10,17 +10,22 @@ use ratatui::{
 };
 // use tracing::debug;
 use memmap::Mmap;
+use tui_textarea::TextArea;
 // use tracing::info;
 
-use super::{logger::Logger, Component, Frame, filter_screen::FilterScreen};
+use super::{logger::Logger, Component, Frame, filter_screen::FilterScreen, text_entry::TextEntry};
 use crate::action::{Action, FilterListAction, CursorMove, LineFilter, FilterType};
 
 /// TODO In order:
+///  3. Add search (/)
+///  5. Search-caching
+///  4. Page up/down?
+/// 6. go-to by pressing g to bring up go menu. g again auto goes to beginning, everything else gets typed into a text box for goto purposes.
+/// Already implemented, and if done right with search, can be used to search something, then go to time, then press nt og et to next thing after current cursor.
+/// DONE
 ///  1. Add j and k for scroll down and up.#
 ///  2. Complete filter in/out
-///  3. Add search (/)
-///  4. Page up/down?
-///  5. Search-caching
+/// 
 
 // type Line = str;
 type Line<'a> = Cow<'a, str>;
@@ -256,6 +261,11 @@ pub struct Home {
   show_filter_screen: bool,
   filter_screen: FilterScreen<'static>,
 
+  show_search: bool,
+  search_screen: TextEntry<'static>,
+  last_search: String,
+  search_visits: Vec<usize>,
+
   /// Pre-filtered based on each action.
   // view: Vec<Cow<'mmap, str>>,
   view: Vec<DispLine>,
@@ -275,6 +285,10 @@ impl Home {
       filter_screen: FilterScreen::default(),
       g_primed: false,
       view: Vec::default(),
+      show_search: false,
+      search_screen: TextEntry::default(),
+      last_search: String::default(),
+      search_visits: Vec::default(),
     }
   }
 
@@ -299,6 +313,10 @@ impl Home {
       // let byte_after_newline = min(self.mmap.len(), self.byte_cursor + bytes_til_newline + 1);
 
       self.byte_cursor = self.view[0].file_loc.1+1;
+      if self.byte_cursor >= self.mmap.len() {
+        self.byte_cursor = self.mmap.len() - 1;
+        info!("Tried to go past end of file!");
+      }
       info!("Set cursor to {}", self.byte_cursor);
   }
 
@@ -318,6 +336,54 @@ impl Home {
       // TODO Just set cursor to mmap.len()? Does cursor really need to be at beginning of valid line always?
       self.byte_cursor = find_line_starting_before(&self.mmap, self.mmap.len());
   }
+
+  pub fn new_search(&mut self) {
+    let needle = &self.search_screen.textarea.lines()[0];
+    let haystack = &self.mmap[self.byte_cursor..];
+    let result = haystack.find(needle);
+    self.last_search = needle.clone();
+    match result {
+        Some(idx) => {
+          self.byte_cursor += find_line_starting_before(haystack, idx);
+          self.search_visits.push(self.byte_cursor);
+        },
+        None => info!("Nothing found with term: {:?}", needle),
+    }
+    self.search_screen.textarea.delete_line_by_head();
+  }
+
+  pub fn repeat_search(&mut self, direction: crate::action::Direction) {
+    match direction {
+      crate::action::Direction::Next => {
+        self.next_line();
+        let needle = &self.last_search;
+        // let haystack = &self.mmap[self.byte_cursor..];
+        // TODO Note inconsistent behavior. When we run search, we will find things that aren't displayed on the current
+        // screen because .find() doesn't know about hidden lines.
+        // But when we repeat search, we will technically skip invisible lines before we repeat the above mistake.
+        let haystack = &self.mmap[self.byte_cursor..];
+        let result = haystack.find(needle);
+        match result {
+            Some(idx) => {
+              self.byte_cursor += find_line_starting_before(haystack, idx);
+              self.search_visits.push(self.byte_cursor);
+            },
+            None => info!("Nothing found with term: {:?}", needle),
+        }
+    },
+    crate::action::Direction::Prev => {
+      // In less, pressing N runs the search bachwards. This can be quite slow.
+      // There is probably a fast way to do it by searching 4k pages at a time
+      // and only breaking down into lines after finding a match.
+      // For now, let's just let N only go backwards through already visited searches.
+      // Would be nice to implement ? search too, probably.
+      match self.search_visits.pop() {
+        Some(idx) => self.byte_cursor = idx,
+        None => info!("Can't go back, reverse serach not yet supported!"),
+      }
+    }
+  }
+}
 
   // fn get_view(&self, rect: Rect) -> String {
   //     // 4kb, TODO Could minimize this by knowing size of terminal+rows returned.
@@ -351,6 +417,12 @@ impl Component for Home {
         return caught;
       }
     }
+    if self.show_search {
+      let caught = self.search_screen.on_key_event(key);
+      if caught != Action::Tick {
+        return caught;
+      }
+    }
     match key.code {
       KeyCode::Char('q') => Action::Quit,
       KeyCode::Char('l') => Action::ToggleShowLogger,
@@ -363,12 +435,16 @@ impl Component for Home {
       KeyCode::Char('G') => Action::CursorMove(CursorMove::End(crate::action::Direction::Next)),
       KeyCode::Char('j') => Action::CursorMove(CursorMove::OneLine(crate::action::Direction::Next)),
       KeyCode::Char('k') => Action::CursorMove(CursorMove::OneLine(crate::action::Direction::Prev)),
+      KeyCode::Char('/') => Action::BeginSearch,
+      KeyCode::Char('n') => Action::RepeatSearch(crate::action::Direction::Next),
+      KeyCode::Char('N') => Action::RepeatSearch(crate::action::Direction::Prev),
       KeyCode::Char('f') => Action::FilterListAction(FilterListAction::OpenFilterScreen),
       _ => Action::Tick,
     }
   }
 
   fn dispatch(&mut self, action: Action) -> Option<Action> {
+    let mut followup_action = None;
     match action {
       Action::Quit => self.is_running = false,
       Action::Tick => self.tick(),
@@ -395,23 +471,45 @@ impl Component for Home {
             crate::action::FilterListAction::OpenFilterScreen => self.show_filter_screen = true,
             _ => {
               let opt = self.filter_screen.dispatch(action);
-              assert_eq!(opt, None);
+              followup_action = opt;
+              // assert_eq!(opt, None);
             },
         }
       }
       Action::TextEntry(_) => {
         if self.show_filter_screen {
           self.filter_screen.dispatch(action);
+        } else if self.show_search {
+          self.search_screen.dispatch(action);
         } else {
           unimplemented!("invalid text entry time");
         }
       }
-      _ => {},
+      Action::Resize(_, _) => {},
+      Action::OpenTextEntry => {},
+      Action::CloseTextEntry => {
+        assert!(self.show_search);
+        self.show_search = false;
+      },
+      Action::ConfirmTextEntry => {
+        assert!(self.show_search);
+        self.show_search = false;
+        self.new_search()
+      },
+      Action::BeginSearch => {
+        self.show_search = true;
+      }
+      Action::RepeatSearch(dir) => {
+        self.repeat_search(dir);
+      }
+      Action::Noop => {},
+      
+      // _ => {},
     }
     if action != Action::Tick {
       self.update_view();
     }
-    None
+    followup_action
   }
 
   fn render(&mut self, f: &mut Frame<'_>, rect: Rect) {
@@ -432,6 +530,19 @@ impl Component for Home {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(rect);
       self.filter_screen.render(f, chunks[1]);
+      chunks[0]
+    } else {
+      rect
+    };
+
+    let rect = if self.show_search {
+      let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Max(3)])
+        .split(rect);
+      let block = Block::default().title("Search: (enter) Submit (esc) Cancel").borders(Borders::all());
+      self.search_screen.textarea.set_block(block);
+      self.search_screen.render(f, chunks[1]);
       chunks[0]
     } else {
       rect
