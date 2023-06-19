@@ -1,26 +1,4 @@
 // #[derive(Debug)]
-// enum Direction {
-//     Prev,
-//     Next,
-// }
-
-// #[derive(Debug)]
-// enum LineMove {
-//     /// 'j' or 'k' in less
-//     OneLine(Direction),
-//     /// 'G' or 'gg' in less
-//     End(Direction),
-//     /// Percentage through the file. '54%' in less
-//     LineRelative(f64),
-//     /// Absolute lineno, ':54' in less.
-//     LineNo(u64),
-//     /// Put the cursor at the beginning of the first line with a timestamp >= this timestamp.
-//     Timestamp(&DateTime<Utc>),
-//     /// E.g. "+1s, +5m". TODO
-//     TimeRelative(TimeDelta),
-// }
-//
-// #[derive(Debug)]
 // enum Command {
 //     LineMove(LineMove),
 //     /// Can move the cursor within lines. Cache results for searches unlike `less`.

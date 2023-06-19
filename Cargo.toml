@@ -20,6 +20,7 @@ test-env-log = "0.2.8"
 regex = "0.2"
 
 ratatui = {version = "0.21.0"}
+# ratatui = {version = "0.20.0"}
 crossterm = { version = "0.26.1", default-features = false, features = [
   "event-stream",
 ] }
@@ -45,3 +46,10 @@ log = "0.4.19"
   # version = "0.2.0",
 # tui-textarea = { git = "https://github.com/rhysd/tui-textarea", features = ["ratatui-crossterm"], default-features=false }
 tui-textarea = { git = "https://github.com/haydenflinner/tui-textarea", features = ["ratatui-crossterm"], default-features=false }
+
+[dev-dependencies]
+criterion = { version = "0.4", features = ["html_reports"] }
+
+[[bench]]
+name = "my_benchmark"
+harness = false

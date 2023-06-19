@@ -48,13 +48,6 @@ struct Page {
     start_time: DateTime<Utc>,
 }
 
-fn find_start_line_pct(mmap: &Mmap, pct: usize) -> usize {
-    if pct == 0 {
-        return 0;
-    }
-    find_line_starting_before(mmap, mmap.len() / pct)
-}
-
 const PG_SIZE: usize = 4096;
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct PageNo(pub usize);
@@ -85,26 +78,6 @@ type PageTable = BTreeMap<PageNo, Page>;
 //     /// Need to integrate with rdrain.
 //     AutoSkip,
 // }
-
-/// Find first character of line starting at or before byte_offset.
-fn find_line_starting_before(s: &[u8], byte_offset: usize) -> usize {
-    // mmap[0..byte_offset].iter().rev().find('\n').unwrap_or(0)
-    let bytes_before_offset_of_newline = 
-        // s[0..byte_offset]
-        s[..byte_offset]
-        .iter()
-        .rev()
-        .enumerate()
-        .find_map(|(index, val)| match val {
-            val if *val == ('\n' as u8) => Some(index),
-            _ => None,
-        })
-        .unwrap_or(byte_offset);
-    // 4096 -> 3486 should find byte 10. TODO Unit test.
-    let idx = byte_offset - bytes_before_offset_of_newline;
-    assert!(idx == 0 || s[idx-1] == ('\n' as u8));
-    return idx;
-}
 
 fn parse_date_starting_at(s: &[u8], start_offset: usize) -> Option<DateTime<Utc>> {
     // TODO .. need to use min or is that implicit like Python?
@@ -238,29 +211,6 @@ impl NavHandler<'_> {
         // TODO mvp: just need goto time! And maye a little bit of polish on the color scheme! Then can add everything else over time!
         // TODO highlighting logs with regex / capturing groups.
         let _spot = bin_search(self.mmap, spec);
-    }
-
-    fn get_view(&self) -> &str {
-        // 4kb, TODO Could minimize this by knowing size of terminal+rows returned.
-        // Also this re-validates as utf8 each redraw, who cares for now.
-        // std::str::from_utf8(&self.mmap[self.byte_cursor..min(PG_SIZE * 4, self.mmap.len())]).unwrap().to_string()
-        std::str::from_utf8(&self.mmap[self.byte_cursor..min(PG_SIZE * 4, self.mmap.len())]).unwrap()
-    }
-
-    fn next_line(&mut self) {
-        // let bytes_til_newline = &mmap[cursor..cursor.PG_SIZE*4]
-        let bytes_til_newline = self
-            .mmap[self.byte_cursor..self.mmap.len()]
-            .iter()
-            .enumerate()
-            .find_map(|(index, val)| match val {
-                val if *val == ('\n' as u8) => Some(index),
-                _ => None,
-            })
-            .unwrap_or(0);
-        // assert!(self.mmap[byte_til_newline])
-        let byte_after_newline = min(self.mmap.len(), self.byte_cursor + bytes_til_newline + 1);
-        self.byte_cursor = byte_after_newline;
     }
 
     fn goto_str(&mut self, cmd: &str) {

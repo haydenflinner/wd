@@ -1,4 +1,5 @@
 use anyhow::Result;
+use tracing::info;
 use crossterm::{event::{KeyCode, KeyEvent}, cursor::MoveToPreviousLine};
 use ratatui::{
   layout::Rect,
@@ -8,7 +9,7 @@ use ratatui::{
 };
 
 use crate::action::Action;
-use crate::components::home::LineFilter;
+use crate::action::LineFilter;
 
 use tui_textarea::TextArea;
 
@@ -17,7 +18,7 @@ use super::{Component, Frame};
 #[derive(Default)]
 pub struct TextEntry<'a> {
   // state: TuiWidgetState,
-  textarea: TextArea<'a>,
+  pub textarea: TextArea<'a>,
 }
 
 impl<'a> Component for TextEntry<'a> {
@@ -27,13 +28,24 @@ impl<'a> Component for TextEntry<'a> {
 
   fn on_key_event(&self, key: KeyEvent) -> Action {
     match key.code {
-      KeyCode::Enter => Action::CloseTextEntry,
-      _ => { self.textarea.input(key); Action::Tick },
+      KeyCode::Enter => Action::ConfirmTextEntry,
+      KeyCode::Esc => Action::CloseTextEntry,
+      keycode => Action::TextEntry(key),
+      // _ => { self.textarea.input(key); Action::Tick },
+      // _ => { self.textarea.withinput(key); Action::Tick },
+      // TODO Send Key Action
     }
   }
 
 
   fn dispatch(&mut self, action: Action) -> Option<Action> {
+    match action {
+      Action::TextEntry(key) => {
+        self.textarea.input(key);
+        info!("Received: {:?}", action);
+      }
+      _ => {}
+    }
     None
   }
 
