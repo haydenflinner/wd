@@ -1,6 +1,7 @@
 use std::{borrow::Cow, cmp::min, str::pattern::{Pattern, Searcher}};
 
 use bstr::{ByteSlice, BStr};
+use chrono::{Local, DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent};
 use log::{warn, debug, info};
 use ratatui::{
@@ -166,6 +167,30 @@ fn find_start_line_pct(mmap: &Mmap, pct: usize) -> usize {
 }
 
 
+fn parse_date_starting_at(s: &[u8]) -> Option<DateTime<Utc>> {
+    // TODO .. need to use min or is that implicit like Python?
+    let s = std::str::from_utf8(&s[..min(100, s.len())]).unwrap();
+    let second_space_idx = s
+        .char_indices()
+        .filter_map(|(index, char)| match char == ' ' {
+            true => Some(index),
+            false => None,
+        })
+        .nth(1)
+        .unwrap();
+    let s = &s[0..second_space_idx];
+    debug!("Parsing: {}", s);
+    // match dateparser::parse(std::str::from_utf8(&s).unwrap()) {
+    /*match dateparser::parse(s) {
+        Ok(dt) => dt,
+        _ => panic!(),
+    }*/
+    dateparser::parse_with_timezone(s, &Local).ok()
+}
+
+
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,6 +300,7 @@ pub struct Home {
   mmap: Mmap,
   byte_cursor: usize,
 
+  /// TODO g to open goto menu, which offers typign in a timestamp, a % amount, or pressing g again to go to beginning.
   g_primed: bool,
 
   show_filter_screen: bool,

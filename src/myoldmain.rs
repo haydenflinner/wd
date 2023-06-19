@@ -64,22 +64,7 @@ impl PageNo {
 type PageTable = BTreeMap<PageNo, Page>;
 
 
-// #[derive(Debug)]
-// enum Command {
-//     LineMove(LineMove),
-//     /// Can move the cursor within lines. Cache results for searches unlike `less`.
-//     SearchTerm(SearchTerm),
-//     FilterCmd(FilterCmd),
-//     /// Looks at all log-templates that are on-screen. Skips to next log-line that is from a different template.
-//     /// Note that this isn't strictly optimal if you have a couple of templates that alternate more than a screenful apart.
-//     /// Maybe we could be smarter and recognize that the autoskip cmd keeps getting issue while a majority of the
-//     /// templates present haven't changed. Or we could expose some controls for which are going to be skipped past.
-//     /// Press 't' to pull up template menu, then can filter in and out on these?
-//     /// Need to integrate with rdrain.
-//     AutoSkip,
-// }
-
-fn parse_date_starting_at(s: &[u8], start_offset: usize) -> Option<DateTime<Utc>> {
+fn parse_date_starting_at(s: &[u8], start_offset: usize) -> Option<DateTime<Local>> {
     // TODO .. need to use min or is that implicit like Python?
     let s = std::str::from_utf8(&s[start_offset..min(start_offset + 100, s.len())]).unwrap();
     let second_space_idx = s
@@ -97,8 +82,9 @@ fn parse_date_starting_at(s: &[u8], start_offset: usize) -> Option<DateTime<Utc>
         Ok(dt) => dt,
         _ => panic!(),
     }*/
-    dateparser::parse_with_timezone(s, &Utc).ok()
+    dateparser::parse_with_timezone(s, &Local).ok()
 }
+
 
 fn init_page_for_offset(page_table: &mut PageTable, mmap: &Mmap, offset: usize) {
     // let offset = offset - (offset % PG_SIZE);
