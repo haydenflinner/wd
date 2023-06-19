@@ -1,4 +1,4 @@
-use std::{borrow::Cow, cmp::min};
+use std::{borrow::Cow, cmp::min, str::pattern::{Pattern, Searcher}};
 
 use bstr::{ByteSlice, BStr};
 use crossterm::event::{KeyCode, KeyEvent};
@@ -6,7 +6,7 @@ use log::{warn, debug, info};
 use ratatui::{
   layout::{Alignment, Constraint, Direction, Layout, Rect},
   style::{Color, Style},
-  widgets::{Block, BorderType, Borders, Paragraph, Wrap},
+  widgets::{Block, BorderType, Borders, Paragraph, Wrap}, text::{Line, Span},
 };
 // use tracing::debug;
 use memmap::Mmap;
@@ -28,7 +28,7 @@ use crate::action::{Action, FilterListAction, CursorMove, LineFilter, FilterType
 /// 
 
 // type Line = str;
-type Line<'a> = Cow<'a, str>;
+// type Line<'a> = Cow<'a, str>;
 
 #[derive(PartialEq, Eq)]
 enum LineFilterResult {
@@ -56,7 +56,30 @@ fn line_allowed(filters: &Vec<LineFilter>, line: &str) -> bool {
 }
 
 // TODO add coloring and highlighting.
-fn fmt_visible_lines(lines: Vec<Line>) -> Vec<Line> { lines }
+// fn fmt_visible_lines(lines: Vec<Line>) -> Vec<Line> { lines }
+
+pub fn highlight_lines(lines: &mut Vec<DispLine>, needle: &str) {
+  if needle.len() == 0 {
+    return;
+  }
+  for line in lines {
+    let orig_line = line.line.clone();
+    let line_txt = orig_line.spans[0].content.to_owned();
+    let mut searcher = needle.into_searcher(&line_txt);
+    let mut spans = Vec::new();
+    let mut last_plain = 0;
+    while let Some((start, end)) = searcher.next_match() {
+      // let spans 
+      spans.push(Span { content: line_txt[last_plain..start].to_owned().into(), style: Style::default()});
+      spans.push(Span { content: line_txt[start..end].to_owned().into(), style: Style::default().bg(Color::LightGreen)});
+      last_plain = end;
+    }
+    if last_plain != line_txt.len() {
+      spans.push(Span { content: line_txt[last_plain..].to_owned().into(), style: Style::default()});
+    }
+    line.line = Line { alignment: None, spans};
+  }
+}
 
 pub fn get_visible_lines<'a, 'b>(source: &'a BStr, filters: &'b Vec<LineFilter>, rows: u16, cols: u16, offset_into_big: usize)
   -> Vec<DispLine> {
@@ -73,7 +96,7 @@ pub fn get_visible_lines<'a, 'b>(source: &'a BStr, filters: &'b Vec<LineFilter>,
     let maybe_add_line = |lines: &mut Vec<DispLine>, ending_index: usize, displayed_rows: &mut u16, rows_for_this_line: &u16, line_start: usize| {
         let line = source[line_start..ending_index].to_str_lossy().into_owned();
         if line_allowed(filters, &line) {
-            lines.push(DispLine { file_loc: (offset_into_big+line_start, offset_into_big+ending_index), line: line });
+            lines.push(DispLine { file_loc: (offset_into_big+line_start, offset_into_big+ending_index), line: line.into() });
             *displayed_rows += rows_for_this_line + 1;
             return;
         }
@@ -153,7 +176,7 @@ mod tests {
     #[test]
     fn test_visible() {
       let call = |rows, cols| -> String {
-        get_visible_lines("lol".into(), &vec!(), rows, cols, 0).iter().map(|l| l.line.clone()).intersperse("\n".to_string()).collect()
+        get_visible_lines("lol".into(), &vec!(), rows, cols, 0).iter().map(|l| l.line.spans[0].content.clone().to_owned()).intersperse("\n".to_string().into()).collect()
       };
       assert_eq!(call(80, 80), "lol");
     }
@@ -161,7 +184,8 @@ mod tests {
     #[test]
     fn test_visible1() {
       let call = |rows, cols| -> String {
-        get_visible_lines(LINES.into(), &vec!(), rows, cols, 0).iter().map(|l| l.line.clone()).intersperse("\n".to_string()).collect()
+      // let s: Vec<_> = self.view.iter().map(|dl| dl.line.clone()).collect();
+        get_visible_lines(LINES.into(), &vec!(), rows, cols, 0).iter().map(|l| l.line.spans[0].content.clone().to_owned()).intersperse("\n".to_string().into()).collect()
       };
       assert_eq!(call(80, 80), LINES);
     }
@@ -174,7 +198,7 @@ mod tests {
       // assert_eq!(res, comp);
       // assert_eq!(get_visible_lines(s, &vec!(), 1, 1), comp);
       let call = |rows, cols| -> String {
-        get_visible_lines(s, &vec!(), rows, cols, 0).iter().map(|l| l.line.clone()).intersperse("\n".to_string()).collect()
+        get_visible_lines(s, &vec!(), rows, cols, 0).iter().map(|l| l.line.spans[0].content.clone().to_owned()).intersperse("\n".to_string().into()).collect()
       };
       assert_eq!(call(80, 80), s);
       assert_eq!(call(1, 1), "");
@@ -228,13 +252,8 @@ mod tests {
 
 pub struct DispLine {
   file_loc: (usize, usize),
-  line: String,
-}
-
-impl Into<String> for DispLine {
-  fn into(self) -> String {
-    self.line
-  }
+  // line: String,
+  line: ratatui::text::Line<'static>,
 }
 
 // impl DispLine {
@@ -346,9 +365,14 @@ impl Home {
         Some(idx) => {
           self.byte_cursor += find_line_starting_before(haystack, idx);
           self.search_visits.push(self.byte_cursor);
+          // https://github.com/rhysd/tui-textarea/blob/main/src/highlight.rs#L101
+          // Great reference for using Spans to highlight lines.
+          // self.search_screen.textarea.input().th
+          // self.search_screen.textarea.set_search_pattern(needle);
         },
         None => info!("Nothing found with term: {:?}", needle),
     }
+    // TODO Store .show within the textentry, and move cursor to end before delete (in case press enter midway thru line)
     self.search_screen.textarea.delete_line_by_head();
   }
 
@@ -398,6 +422,7 @@ impl Home {
 
   fn update_view(&mut self) {
     self.view = get_visible_lines(&self.mmap[self.byte_cursor..].as_bstr(), &self.filter_screen.items, 1000, 1000, self.byte_cursor);
+    highlight_lines(&mut self.view, &self.last_search);
     // &self.filter_screen.items, 1000, 1000).iter_mut().map(|s| s.line.clone()).collect();
   }
 
@@ -553,7 +578,9 @@ impl Component for Home {
     // info!("{}", s);
     // let os = format!("Press j or k to increment or decrement.\n\nCounter: {}", self.counter);
     // let s = self.get_view(rect);
-    let s: String = self.view.iter().map(|l| l.line.clone()).intersperse("\n".to_string()).collect();
+    // let s: String = self.view.iter().map(|l| l.line.clone()).intersperse("\n".to_string()).collect();
+    // TODO Color here
+    let s: Vec<_> = self.view.iter().map(|dl| dl.line.clone()).collect();
     f.render_widget(
       Paragraph::new(s)
       .alignment(Alignment::Left)

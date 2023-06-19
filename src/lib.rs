@@ -3,6 +3,7 @@
 #![allow(unused_imports)]
 #![allow(unused_variables)]
 #![feature(iter_intersperse)]
+#![feature(pattern)]
 
 pub mod app;
 
