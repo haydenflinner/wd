@@ -1,8 +1,8 @@
-use std::{borrow::Cow, cmp::min, str::pattern::{Pattern, Searcher}};
+use std::{borrow::Cow, cmp::{min, max, Ordering}, str::pattern::{Pattern, Searcher}};
 
 use bstr::{ByteSlice, BStr};
 use chrono::{Local, DateTime, Utc};
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, KeyEventKind, KeyEventState};
 use log::{warn, debug, info};
 use ratatui::{
   layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -14,7 +14,7 @@ use memmap::Mmap;
 use tui_textarea::TextArea;
 // use tracing::info;
 
-use super::{logger::Logger, Component, Frame, filter_screen::FilterScreen, text_entry::TextEntry};
+use super::{logger::Logger, Component, Frame, filter_screen::FilterScreen, text_entry::TextEntry, go_screen::GoScreen};
 use crate::action::{Action, FilterListAction, CursorMove, LineFilter, FilterType};
 
 /// TODO In order:
@@ -159,17 +159,16 @@ fn find_line_starting_before(s: &[u8], byte_offset: usize) -> usize {
     return idx;
 }
 
-fn find_start_line_pct(mmap: &Mmap, pct: usize) -> usize {
-    if pct == 0 {
-        return 0;
-    }
-    find_line_starting_before(mmap, mmap.len() / pct)
+fn find_start_line_pct(mmap: &Mmap, pct: f64) -> usize {
+  let pct = f64::min(f64::max(pct, 0.0), 100.0);
+  let going_to = (mmap.len() as f64 * (pct/100.0)).floor() as usize;
+  find_line_starting_before(mmap, going_to)
 }
 
 
-fn parse_date_starting_at(s: &[u8]) -> Option<DateTime<Utc>> {
+fn parse_date_starting_at(s: &[u8], start_offset: FileOffset) -> Option<DateTime<Utc>> {
     // TODO .. need to use min or is that implicit like Python?
-    let s = std::str::from_utf8(&s[..min(100, s.len())]).unwrap();
+    let s = std::str::from_utf8(&s[start_offset..min(start_offset + 100, s.len())]).unwrap();
     let second_space_idx = s
         .char_indices()
         .filter_map(|(index, char)| match char == ' ' {
@@ -193,6 +192,8 @@ fn parse_date_starting_at(s: &[u8]) -> Option<DateTime<Utc>> {
 
 #[cfg(test)]
 mod tests {
+    use chrono::FixedOffset;
+
     use super::*;
 
     static LINES: &str = "03/22/2022 08:51:06 INFO   :...mylogline
@@ -272,8 +273,99 @@ mod tests {
         )
       );
     }
+
+    #[test]
+    fn test_first() {
+        assert_eq!(bin_search(LINES.as_bytes(), 
+            &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:06Z").unwrap().with_timezone(&Utc)).unwrap(),
+        0);
+    }
+
+    #[test]
+    fn test_second() {
+        assert_eq!(bin_search(LINES.as_bytes(), 
+            &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:08Z").unwrap().with_timezone(&Utc)).unwrap(),
+        41);
+    }
+
+    #[test]
+    fn test_between() {
+        assert_eq!(bin_search(LINES.as_bytes(), 
+            &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:07Z").unwrap().with_timezone(&Utc)).unwrap(),
+        41);
+    }
+
+    #[test]
+    fn test_after() {
+        assert_eq!(bin_search(LINES.as_bytes(), 
+            &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:09Z").unwrap().with_timezone(&Utc)).unwrap(),
+        80);
+    }
+
+    #[test]
+    fn test_before() {
+        assert_eq!(bin_search(LINES.as_bytes(), 
+            &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:00Z").unwrap().with_timezone(&Utc)).unwrap(),
+        0);
+    }
+
+    #[test]
+    fn test_re() {
+        let re = Regex::new("[0-9]{3}-[0-9]{3}-[0-9]{4}").unwrap();
+        let mat = re.find("phone: 111-222-3333").unwrap();
+        // TODO Use this to highlight within the match. And to search next instance.
+        assert_eq!((mat.start(), mat.end()), (7, 19));
+    }
 }
 
+type FileOffset = usize;
+
+#[derive(Debug)]
+enum TsBinSearchError {
+    FailedParseTs,
+}
+
+// fn bin_search_file(s: &[u8], dt: &DateTime<Utc>) {
+fn bin_search(s: &[u8], dt: &DateTime<Utc>) -> Result<FileOffset, TsBinSearchError> {
+    let mut low: usize = 0;
+    let mut high: usize = s.len() - 1;
+    let mut middle = 0;
+
+    while low <= high {
+        middle = (high + low) / 2;
+        info!("Bin search: low: {}, mid: {}, high: {}", low, middle, high);
+        let mut lines_try = 1000;
+        let mut byte_offset = middle;
+        while lines_try > 0 {
+          let line_start = find_line_starting_before(&s, byte_offset);
+          let maybe_ts = parse_date_starting_at(s, line_start);
+          match maybe_ts {
+            Some(ts) => {
+              info!("Comparing tses {} and {}", ts, dt);
+              match ts.cmp(dt) {
+                  Ordering::Less => { low = middle + 1; break; },
+                  Ordering::Equal => return Ok(line_start), // lucky guess!
+                  Ordering::Greater => {
+                      if middle == 0 {
+                          return Ok(0);
+                      }
+                      high = middle - 1;
+                      break;
+                  }
+              }
+            },
+            None => {
+              byte_offset = line_start - 1;
+              lines_try -= 1;
+            },
+        }
+      }
+      if lines_try == 0 {
+        return Err(TsBinSearchError::FailedParseTs);
+      }
+    }
+    return Ok(middle);
+}
 
 pub struct DispLine {
   file_loc: (usize, usize),
@@ -301,7 +393,7 @@ pub struct Home {
   byte_cursor: usize,
 
   /// TODO g to open goto menu, which offers typign in a timestamp, a % amount, or pressing g again to go to beginning.
-  g_primed: bool,
+  go_screen: GoScreen,
 
   show_filter_screen: bool,
   filter_screen: FilterScreen<'static>,
@@ -328,7 +420,8 @@ impl Home {
       byte_cursor: 0,
       show_filter_screen: false,
       filter_screen: FilterScreen::default(),
-      g_primed: false,
+      go_screen: GoScreen::default(),
+
       view: Vec::default(),
       show_search: false,
       search_screen: TextEntry::default(),
@@ -365,7 +458,16 @@ impl Home {
       info!("Set cursor to {}", self.byte_cursor);
   }
 
-  pub fn goto_pct(&mut self, pct: usize) {
+
+  pub fn goto_dt(&mut self, dt: &DateTime<Utc>) {
+      let spot = bin_search(self.mmap.as_bstr(), dt);
+      match spot {
+        Ok(cursor) => self.byte_cursor = cursor,
+        Err(_) => {spot.unwrap();},
+    }
+  }
+
+  pub fn goto_pct(&mut self, pct: f64) {
       self.byte_cursor = find_start_line_pct(&self.mmap, pct);
   }
 
@@ -474,18 +576,31 @@ impl Component for Home {
         return caught;
       }
     }
+    if self.go_screen.show {
+      // if let Action::TextEntry(KeyEvent { code: KeyCode::Char('g'), modifiers: KeyModifiers::NONE, kind: KeyEventKind::Press, state: KeyEventState::NONE }) = action {
+      // TODO Let 'g' be handled by the go screen so it can close itself.
+      if key.code == KeyCode::Char('g') {
+        return Action::CursorMove(CursorMove::End(crate::action::Direction::Prev));
+      }
+      let caught = self.go_screen.on_key_event(key);
+      if caught != Action::Tick {
+        return caught;
+      }
+    }
     match key.code {
       KeyCode::Char('q') => Action::Quit,
       KeyCode::Char('l') => Action::ToggleShowLogger,
       KeyCode::Char('g') => {
-        match self.g_primed {
+        match self.go_screen.show {
             true => Action::CursorMove(CursorMove::End(crate::action::Direction::Prev)),
-            false => Action::Primeg,
+            false => Action::OpenGoScreen,
         }
       }
       KeyCode::Char('G') => Action::CursorMove(CursorMove::End(crate::action::Direction::Next)),
       KeyCode::Char('j') => Action::CursorMove(CursorMove::OneLine(crate::action::Direction::Next)),
       KeyCode::Char('k') => Action::CursorMove(CursorMove::OneLine(crate::action::Direction::Prev)),
+      KeyCode::Down => Action::CursorMove(CursorMove::OneLine(crate::action::Direction::Next)),
+      KeyCode::Up => Action::CursorMove(CursorMove::OneLine(crate::action::Direction::Prev)),
       KeyCode::Char('/') => Action::BeginSearch,
       KeyCode::Char('n') => Action::RepeatSearch(crate::action::Direction::Next),
       KeyCode::Char('N') => Action::RepeatSearch(crate::action::Direction::Prev),
@@ -496,6 +611,10 @@ impl Component for Home {
 
   fn dispatch(&mut self, action: Action) -> Option<Action> {
     let mut followup_action = None;
+    if self.go_screen.show {
+      let opt = self.go_screen.dispatch(action);
+      return opt;
+    }
     match action {
       Action::Quit => self.is_running = false,
       Action::Tick => self.tick(),
@@ -510,11 +629,16 @@ impl Component for Home {
                 crate::action::Direction::Prev => self.goto_begin(),
                 crate::action::Direction::Next => self.goto_end(),
             },
-            CursorMove::Timestamp(_) => todo!(),
+            CursorMove::Timestamp(ts) => {
+              self.goto_dt(&ts);
+            },
+            CursorMove::Percentage(pct) => {
+              self.goto_pct(pct);
+            },
         }
       }
-      Action::Primeg => {
-        self.g_primed = true;
+      Action::OpenGoScreen => {
+        self.go_screen.show = true;
       },
       Action::FilterListAction(fa) => {
         match fa {
@@ -532,10 +656,12 @@ impl Component for Home {
           self.filter_screen.dispatch(action);
         } else if self.show_search {
           self.search_screen.dispatch(action);
+        } else if self.go_screen.show {
+          self.go_screen.dispatch(action);
         } else {
           unimplemented!("invalid text entry time");
         }
-      }
+      },
       Action::Resize(_, _) => {},
       Action::OpenTextEntry => {},
       Action::CloseTextEntry => {
@@ -594,6 +720,17 @@ impl Component for Home {
       let block = Block::default().title("Search: (enter) Submit (esc) Cancel").borders(Borders::all());
       self.search_screen.textarea.set_block(block);
       self.search_screen.render(f, chunks[1]);
+      chunks[0]
+    } else {
+      rect
+    };
+
+    let rect = if self.go_screen.show {
+      let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Max(3)])
+        .split(rect);
+      self.go_screen.render(f, chunks[1]);
       chunks[0]
     } else {
       rect

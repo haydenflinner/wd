@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use chrono::{Local, DateTime};
+use chrono::{Local, DateTime, Utc};
 use crossterm::event::{KeyEvent};
 use env_logger::filter::Filter;
 use futures::{FutureExt, StreamExt};
@@ -57,23 +57,23 @@ pub struct TimeDelta {
   num_seconds: i64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CursorMove {
     /// 'j' or 'k' in less
     OneLine(Direction),
     /// 'G' or 'gg' in less
     End(Direction),
     /// Percentage through the file. '54%' in less => 0.54
-    // LineRelative(f64),
+    Percentage(f64),
     // /// Absolute lineno, ':54' in less.
     // LineNo(u64),
     /// Put the cursor at the beginning of the first line with a timestamp >= this timestamp.
-    Timestamp(DateTime<Local>),
+    Timestamp(DateTime<Utc>),
     // /// E.g. "+1s, +5m". TODO
     // TimeDelta(TimeDelta),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Action {
   Quit,
   Tick,
@@ -81,7 +81,7 @@ pub enum Action {
 
   CursorMove(CursorMove),
   /// Pressed 'g' which means may soon press 'g' again for 'gg' beg-file cmd.
-  Primeg,
+  OpenGoScreen,
 
   ToggleShowLogger,
   BeginSearch,

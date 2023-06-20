@@ -144,7 +144,6 @@ struct App {
     mmap: Mmap,
 }
 
-type FileOffset = usize;
 
 impl App {
 }
@@ -199,15 +198,6 @@ impl NavHandler<'_> {
         let _spot = bin_search(self.mmap, spec);
     }
 
-    fn goto_str(&mut self, cmd: &str) {
-        fn parse_int(input: &str) -> usize {
-            input[0..input.len()-1].parse().unwrap()
-        }
-        if cmd.contains('%') {
-            return self.goto_pct(parse_int(cmd));
-        }
-    }
-
     fn goto_pct(&mut self, pct: usize) {
         self.byte_cursor = find_start_line_pct(&self.mmap, pct);
     }
@@ -227,97 +217,6 @@ impl NavHandler<'_> {
 
     fn goto(&mut self, line_idx: usize) {
         self.byte_cursor = find_line_starting_before(&self.mmap, line_idx);
-    }
-}
-
-#[derive(Debug)]
-enum TsBinSearchError {
-    FailedParseTs,
-}
-
-// fn bin_search_file(s: &[u8], dt: &DateTime<Utc>) {
-fn bin_search(s: &[u8], dt: &DateTime<Utc>) -> Result<FileOffset, TsBinSearchError> {
-    let mut low: usize = 0;
-    let mut high: usize = s.len() - 1;
-    let mut middle = 0;
-
-    while low <= high {
-        middle = (high + low) / 2;
-        info!("Bin search: low: {}, mid: {}, high: {}", low, middle, high);
-        match find_line_starting_before(&s, middle) {
-            // i if i <= low => return Ok(i), // Previous line begins before our search area.
-            line_i => {
-                let ts = parse_date_starting_at(s, line_i);
-                match ts {
-                    Some(ts) => {
-                        info!("Comparing tses {} and {}", ts, dt);
-                        match ts.cmp(dt) {
-                            Ordering::Less => low = middle + 1,
-                            Ordering::Equal => return Ok(line_i), // lucky guess!
-                            Ordering::Greater => {
-                                if middle == 0 {
-                                    return Ok(0);
-                                }
-                                high = middle - 1
-                            }
-                        }
-                    }
-                    None => return Err(TsBinSearchError::FailedParseTs), // TODO head to previous line and look for timestamp!
-                }
-            }
-        }
-    }
-    return Ok(middle);
-}
-
-#[cfg(test)]
-mod tests {
-    // Note this useful idiom: importing names from outer (for mod tests) scope.
-    use super::*;
-        static LINES: &str = "03/22/2022 08:51:06 INFO   :...mylogline
-03/22/2022 08:51:08 INFO   :...mylogline";
- 
-    #[test]
-    fn test_first() {
-        assert_eq!(bin_search(LINES.as_bytes(), 
-            &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:06Z").unwrap().with_timezone(&Utc)).unwrap(),
-        0);
-    }
-
-    #[test]
-    fn test_second() {
-        assert_eq!(bin_search(LINES.as_bytes(), 
-            &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:08Z").unwrap().with_timezone(&Utc)).unwrap(),
-        41);
-    }
-
-    #[test]
-    fn test_between() {
-        assert_eq!(bin_search(LINES.as_bytes(), 
-            &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:07Z").unwrap().with_timezone(&Utc)).unwrap(),
-        41);
-    }
-
-    #[test]
-    fn test_after() {
-        assert_eq!(bin_search(LINES.as_bytes(), 
-            &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:09Z").unwrap().with_timezone(&Utc)).unwrap(),
-        80);
-    }
-
-    #[test]
-    fn test_before() {
-        assert_eq!(bin_search(LINES.as_bytes(), 
-            &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:00Z").unwrap().with_timezone(&Utc)).unwrap(),
-        0);
-    }
-
-    #[test]
-    fn test_re() {
-        let re = Regex::new("[0-9]{3}-[0-9]{3}-[0-9]{4}").unwrap();
-        let mat = re.find("phone: 111-222-3333").unwrap();
-        // TODO Use this to highlight within the match. And to search next instance.
-        assert_eq!((mat.start(), mat.end()), (7, 19));
     }
 }
 

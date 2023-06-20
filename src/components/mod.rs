@@ -15,6 +15,7 @@ pub mod home;
 pub mod logger;
 pub mod filter_screen;
 pub mod text_entry;
+pub mod go_screen;
 
 pub trait Component {
   fn init(&mut self) -> Result<()> {
