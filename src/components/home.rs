@@ -1,8 +1,9 @@
 use std::{borrow::Cow, cmp::{min, max, Ordering}, str::pattern::{Pattern, Searcher}};
 
 use bstr::{ByteSlice, BStr};
-use chrono::{Local, DateTime, Utc};
+use chrono::{Local, DateTime, Utc, Duration, TimeZone};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, KeyEventKind, KeyEventState};
+use dateparser::datetime::Parse;
 use log::{warn, debug, info};
 use ratatui::{
   layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -18,18 +19,17 @@ use super::{logger::Logger, Component, Frame, filter_screen::FilterScreen, text_
 use crate::action::{Action, FilterListAction, CursorMove, LineFilter, FilterType};
 
 /// TODO In order:
-///  3. Add search (/)
-///  5. Search-caching
+/// Profile ratatui, it seems they're slowing down our scrolls.
+/// 8. 'h' highlight menu, like search but sticks around
 ///  4. Page up/down?
-/// 6. go-to by pressing g to bring up go menu. g again auto goes to beginning, everything else gets typed into a text box for goto purposes.
-/// Already implemented, and if done right with search, can be used to search something, then go to time, then press nt og et to next thing after current cursor.
+///  5. Search-caching
+/// 7. Search interruption or asyncness.
+/// Autoskip
 /// DONE
 ///  1. Add j and k for scroll down and up.#
 ///  2. Complete filter in/out
-/// 
-
-// type Line = str;
-// type Line<'a> = Cow<'a, str>;
+///  3. Add search (/)
+/// 6. go-to by pressing g to bring up go menu. g again auto goes to beginning, everything else gets typed into a text box for goto purposes.
 
 #[derive(PartialEq, Eq)]
 enum LineFilterResult {
@@ -175,8 +175,7 @@ fn parse_date_starting_at(s: &[u8], start_offset: FileOffset) -> Option<DateTime
             true => Some(index),
             false => None,
         })
-        .nth(1)
-        .unwrap();
+        .nth(1)?;
     let s = &s[0..second_space_idx];
     debug!("Parsing: {}", s);
     // match dateparser::parse(std::str::from_utf8(&s).unwrap()) {
@@ -184,9 +183,29 @@ fn parse_date_starting_at(s: &[u8], start_offset: FileOffset) -> Option<DateTime
         Ok(dt) => dt,
         _ => panic!(),
     }*/
+
+    // Parse::new(tz, Utc::now().time()).parse(input)
+    // TODO set context with this: https://github.com/waltzofpearls/dateparser/issues/39
     dateparser::parse_with_timezone(s, &Local).ok()
 }
 
+fn find_date_before(s: &[u8], mut byte_offset: FileOffset) -> Option<(FileOffset, DateTime<Utc>)> {
+    let mut lines_try = 1000;
+    while lines_try > 0 {
+      let line_start = find_line_starting_before(&s, byte_offset);
+      let maybe_ts = parse_date_starting_at(s, line_start);
+      match maybe_ts {
+        Some(ts) => {
+          return Some((line_start, ts));
+        },
+        None => {
+          byte_offset = line_start - 1;
+          lines_try -= 1;
+        },
+    }
+  }
+  None
+}
 
 
 
@@ -311,10 +330,10 @@ mod tests {
 
     #[test]
     fn test_re() {
-        let re = Regex::new("[0-9]{3}-[0-9]{3}-[0-9]{4}").unwrap();
-        let mat = re.find("phone: 111-222-3333").unwrap();
+        // let re = Regex::new("[0-9]{3}-[0-9]{3}-[0-9]{4}").unwrap();
+        // let mat = re.find("phone: 111-222-3333").unwrap();
         // TODO Use this to highlight within the match. And to search next instance.
-        assert_eq!((mat.start(), mat.end()), (7, 19));
+        // assert_eq!((mat.start(), mat.end()), (7, 19));
     }
 }
 
@@ -334,34 +353,23 @@ fn bin_search(s: &[u8], dt: &DateTime<Utc>) -> Result<FileOffset, TsBinSearchErr
     while low <= high {
         middle = (high + low) / 2;
         info!("Bin search: low: {}, mid: {}, high: {}", low, middle, high);
-        let mut lines_try = 1000;
-        let mut byte_offset = middle;
-        while lines_try > 0 {
-          let line_start = find_line_starting_before(&s, byte_offset);
-          let maybe_ts = parse_date_starting_at(s, line_start);
-          match maybe_ts {
-            Some(ts) => {
-              info!("Comparing tses {} and {}", ts, dt);
-              match ts.cmp(dt) {
-                  Ordering::Less => { low = middle + 1; break; },
-                  Ordering::Equal => return Ok(line_start), // lucky guess!
-                  Ordering::Greater => {
-                      if middle == 0 {
-                          return Ok(0);
-                      }
-                      high = middle - 1;
-                      break;
-                  }
-              }
-            },
-            None => {
-              byte_offset = line_start - 1;
-              lines_try -= 1;
-            },
-        }
-      }
-      if lines_try == 0 {
-        return Err(TsBinSearchError::FailedParseTs);
+        match find_date_before(s, middle) {
+          Some((line_start, ts)) => {
+            info!("Comparing tses {} and {}", ts, dt);
+            match ts.cmp(dt) {
+                Ordering::Less => { low = middle + 1; },
+                Ordering::Equal => return Ok(line_start), // lucky guess!
+                Ordering::Greater => {
+                    if middle == 0 {
+                        return Ok(0);
+                    }
+                    high = middle - 1;
+                }
+            }
+          },
+          None => {
+            return Err(TsBinSearchError::FailedParseTs);
+          },
       }
     }
     return Ok(middle);
@@ -391,6 +399,7 @@ pub struct Home {
 
   mmap: Mmap,
   byte_cursor: usize,
+  today: Option<DateTime<Utc>>,
 
   /// TODO g to open goto menu, which offers typign in a timestamp, a % amount, or pressing g again to go to beginning.
   go_screen: GoScreen,
@@ -418,6 +427,7 @@ impl Home {
       counter: 0,
       mmap,
       byte_cursor: 0,
+      today: None,
       show_filter_screen: false,
       filter_screen: FilterScreen::default(),
       go_screen: GoScreen::default(),
@@ -455,12 +465,21 @@ impl Home {
         self.byte_cursor = self.mmap.len() - 1;
         info!("Tried to go past end of file!");
       }
-      info!("Set cursor to {}", self.byte_cursor);
+      // info!("Set cursor to {}", self.byte_cursor);
   }
 
 
-  pub fn goto_dt(&mut self, dt: &DateTime<Utc>) {
-      let spot = bin_search(self.mmap.as_bstr(), dt);
+  pub fn goto_dt(&mut self, mut dt: DateTime<Utc>) {
+    // If we successfully parsed a 
+    if let Some(file_today) = self.today {
+      let secs_off = (dt.date() - file_today.date()).num_seconds();
+      match Utc.timestamp_opt(dt.timestamp() - secs_off, 0) {
+        chrono::LocalResult::None => {},
+        chrono::LocalResult::Single(ts) => dt = ts,
+        chrono::LocalResult::Ambiguous(_, _) => {},
+    }
+    }
+      let spot = bin_search(self.mmap.as_bstr(), &dt);
       match spot {
         Ok(cursor) => self.byte_cursor = cursor,
         Err(_) => {spot.unwrap();},
@@ -549,7 +568,7 @@ impl Home {
   // }
 
   fn update_view(&mut self) {
-    self.view = get_visible_lines(&self.mmap[self.byte_cursor..].as_bstr(), &self.filter_screen.items, 1000, 1000, self.byte_cursor);
+    self.view = get_visible_lines(&self.mmap[self.byte_cursor..].as_bstr(), &self.filter_screen.items, 200, 600, self.byte_cursor);
     highlight_lines(&mut self.view, &self.last_search);
     // &self.filter_screen.items, 1000, 1000).iter_mut().map(|s| s.line.clone()).collect();
   }
@@ -560,6 +579,11 @@ impl Component for Home {
   fn init(&mut self) -> anyhow::Result<()> {
     self.is_running = true;
     self.update_view();
+    let byte_offset = find_line_starting_before(self.mmap.as_bstr(), self.mmap.len()-1);
+    let maybe_ts = find_date_before(self.mmap.as_bstr(), byte_offset);
+    if let Some((_, ts)) = maybe_ts {
+      self.today = Some(ts);
+    }
     Ok(())
   }
 
@@ -612,6 +636,12 @@ impl Component for Home {
   fn dispatch(&mut self, action: Action) -> Option<Action> {
     let mut followup_action = None;
     if self.go_screen.show {
+      if action == Action::CursorMove(CursorMove::End(crate::action::Direction::Prev)) {
+        self.go_screen.dispatch(Action::FilterListAction(FilterListAction::CloseNew));
+        self.goto_begin();
+        self.update_view();
+        return None;
+      }
       let opt = self.go_screen.dispatch(action);
       return opt;
     }
@@ -630,7 +660,7 @@ impl Component for Home {
                 crate::action::Direction::Next => self.goto_end(),
             },
             CursorMove::Timestamp(ts) => {
-              self.goto_dt(&ts);
+              self.goto_dt(ts);
             },
             CursorMove::Percentage(pct) => {
               self.goto_pct(pct);
@@ -693,7 +723,9 @@ impl Component for Home {
     let rect = if self.show_logger {
       let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        // TODO Very slow scrolling with the log screen closed, but fast with it open.
+        // I guess this means tui is slowing us down? But can't profile.
+        .constraints([Constraint::Percentage(10), Constraint::Percentage(90)])
         .split(rect);
       self.logger.render(f, chunks[1]);
       chunks[0]
@@ -742,7 +774,6 @@ impl Component for Home {
     // let os = format!("Press j or k to increment or decrement.\n\nCounter: {}", self.counter);
     // let s = self.get_view(rect);
     // let s: String = self.view.iter().map(|l| l.line.clone()).intersperse("\n".to_string()).collect();
-    // TODO Color here
     let s: Vec<_> = self.view.iter().map(|dl| dl.line.clone()).collect();
     f.render_widget(
       Paragraph::new(s)

@@ -11,7 +11,7 @@ use ratatui::{
 use crate::action::Action;
 use crate::action::LineFilter;
 
-use tui_textarea::TextArea;
+use tui_textarea::{TextArea, CursorMove};
 
 use super::{Component, Frame};
 
@@ -19,6 +19,23 @@ use super::{Component, Frame};
 pub struct TextEntry<'a> {
   // state: TuiWidgetState,
   pub textarea: TextArea<'a>,
+}
+
+impl TextEntry<'_> {
+  pub fn contents(&self) -> &String {
+    &self.textarea.lines()[0]
+  }
+
+  pub fn clear(&mut self) {
+    self.textarea.move_cursor(CursorMove::End);
+    self.textarea.delete_line_by_head();
+  }
+
+  pub fn pop(&mut self) -> String {
+    let returning = self.contents().clone();
+    self.clear();
+    returning
+  }
 }
 
 impl<'a> Component for TextEntry<'a> {

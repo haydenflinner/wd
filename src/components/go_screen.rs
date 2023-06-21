@@ -1,3 +1,5 @@
+use std::panic;
+
 use anyhow::Result;
 use chrono::Local;
 use log::info;
@@ -9,7 +11,7 @@ use ratatui::{
   widgets,
 };
 
-use crate::action::{Action, FilterListAction, FilterType, CursorMove};
+use crate::{action::{Action, FilterListAction, FilterType, CursorMove}, utils::initialize_panic_handler};
 use crate::action::LineFilter;
 
 use super::{Component, Frame, text_entry::TextEntry};
@@ -23,10 +25,8 @@ pub struct GoScreen {
 
 impl GoScreen {
   fn confirm(&mut self) {
-    let dest = self.txt.textarea.lines()[0].clone();
     self.show = false;
-    // TODO delete whole line
-    self.txt.textarea.delete_line_by_head();
+    let dest = self.txt.pop();
     self.destination = self.parse_dest(&dest);
   }
 
@@ -42,6 +42,43 @@ impl GoScreen {
     }
 
     return None;
+  }
+  
+  fn validate_and_store(&mut self) {
+    self.destination = self.validate_entry();
+  }
+
+  fn validate_entry(&self) -> Option<CursorMove> {
+    let contents = self.txt.contents();
+    if contents.len() == 0 {
+      None
+    } else {
+        // I wish it didn't have to be this way, Windows...
+        // https://github.com/chronotope/chrono/issues/1150
+      panic::set_hook(Box::new(|panic_info| {}));
+      match panic::catch_unwind(|| {
+        let ret = self.parse_dest(self.txt.contents());
+        initialize_panic_handler();
+        ret
+      }) {
+          Ok(res) => {
+            initialize_panic_handler();
+            res
+          },
+          Err(_) => {
+            initialize_panic_handler();
+            None
+          }
+      }
+    }
+  }
+
+  fn valid_entry(&self) -> bool {
+    if self.txt.contents().len() == 0 {
+      true
+    } else {
+      self.destination.is_some()
+    }
   }
 }
 
@@ -64,13 +101,14 @@ impl Component for GoScreen {
       Action::FilterListAction(fa) => {
         match fa {
             // FilterListAction::OpenGoScreen => self.show = true,
-            FilterListAction::CloseList => self.show = false,
+            FilterListAction::CloseNew => self.show = false,
             FilterListAction::ConfirmNew => {self.confirm(); self.show = false; goto_dest = true; },
-            _ => todo!(),
+            _ => todo!("{:?}", fa),
         }
       }
       Action::TextEntry(_) => {
         self.txt.dispatch(action);
+        self.validate_and_store();
       }
       _ => (),
     }
@@ -88,7 +126,10 @@ impl Component for GoScreen {
       .constraints([Constraint::Min(3), Constraint::Max(3)])
       .split(rect);*/
     // let s = format!("Filter {:?}", self.new_filter_type.unwrap());
-    let block = Block::default().title("GoTo: (Enter) Confirm. Examples: \"09:44:21\" \"+5m\" (g) beginning (q/enter/escape) Close ").borders(Borders::ALL.difference(Borders::BOTTOM));
+    let block = Block::default()
+    .title("GoTo: (Enter) Confirm. Examples: \"09:44:21\" \"+5m\" (g) beginning (q/enter/escape) Close ")
+    .borders(Borders::ALL.difference(Borders::BOTTOM))
+    .style(Style::default().fg(if self.valid_entry() { Color::Green } else { Color::Red }));
     self.txt.textarea.set_block(block);
     self.txt.render(f, rect);
     // f.render_widget(self.txt, rect);
