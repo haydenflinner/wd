@@ -787,7 +787,7 @@ impl Component for Home {
         //     .borders(Borders::ALL)
         //     .border_type(BorderType::Rounded),
         // )
-        .style(Style::default().fg(Color::White)),
+        .style(Style::default()),
         // .alignment(Alignment::Center),
       rect,
     )

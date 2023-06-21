@@ -12,7 +12,7 @@ struct Args {
   #[arg(short, long, default_value_t = 5000)]
   tick_rate: u64,
 
-  #[arg(long)]
+  #[arg()]
   filename: String,
 }
 
