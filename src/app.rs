@@ -70,15 +70,17 @@ impl App {
         });
 
         loop {
-            let event = self.events.next().await;
-            self.home
-                .lock()
-                .await
-                .handle_events(event, &mut self.actions)
-                .await?;
-            let mut action = Some(self.actions.recv().await);
-            while action.is_some() {
-                action = self.home.lock().await.dispatch(action.unwrap());
+            {
+                // Block while holding home lock so we stop the draw thread.
+                let mut home = self.home.lock().await;
+                let event = self.events.next().await;
+                home
+                    .handle_events(event, &mut self.actions)
+                    .await?;
+                let mut action = Some(self.actions.recv().await);
+                while action.is_some() {
+                    action = home.dispatch(action.unwrap());
+                }
             }
             if !(self.home.lock().await.is_running) {
                 break;

@@ -5,6 +5,10 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[profile.release]
+debug = true
+
+
 [dependencies]
 # cursive = "0.19"
 # cursive = { git = "https://github.com/gyscos/cursive", features=["ansi"]}
