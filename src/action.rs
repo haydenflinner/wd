@@ -25,12 +25,14 @@ impl FilterType {
 pub struct LineFilter {
     pub needle: String,
     pub filter_type: FilterType,
+    pub enabled: bool,
 }
 impl LineFilter {
     pub fn new(needle: String, filter_type: FilterType) -> Self {
         Self {
             needle,
             filter_type,
+            enabled: true,
         }
     }
 }
@@ -46,6 +48,7 @@ pub enum FilterListAction {
     New(FilterType),
     CloseNew,
     ConfirmNew,
+    Toggle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
