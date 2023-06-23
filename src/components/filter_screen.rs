@@ -175,7 +175,7 @@ impl Component for FilterScreen<'_> {
             .block(
                 // TODO Show how many lines a filter is filtering
                 Block::default()
-                    .title("Filters: (i) In (o) Out (space) Toggle Filter (q/enter/escape) Close ")
+                    .title("Filters: (i) In (o) Out (tab) Toggle Filter (q/enter/escape) Close ")
                     .borders(Borders::ALL.difference(Borders::BOTTOM)),
             )
             .style(Style::default().fg(Color::White))

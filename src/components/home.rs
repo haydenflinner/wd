@@ -46,9 +46,10 @@ enum LineFilterResult {
     Indifferent,
 }
 
-fn line_allowed(filters: &Vec<LineFilter>, line: &str) -> bool {
+fn line_allowed(filters: &Vec<LineFilter>, line: &str) -> (bool, LineFilterResult)  {
     let mut cur = LineFilterResult::Indifferent;
-    for filter in filters.iter() {
+    let get_active_filters = || filters.iter().filter(|f| f.enabled);
+    for filter in get_active_filters() {
         match (line.contains(&filter.needle), filter.filter_type) {
             (true, crate::action::FilterType::In) => cur = LineFilterResult::Include,
             (true, crate::action::FilterType::Out) => cur = LineFilterResult::Exclude,
@@ -58,12 +59,12 @@ fn line_allowed(filters: &Vec<LineFilter>, line: &str) -> bool {
         }
     }
     if cur == LineFilterResult::Indifferent
-        && filters.iter().any(|f| f.filter_type == FilterType::In)
+        && get_active_filters().any(|f| f.filter_type == FilterType::In)
     {
         // If there are any MUST_INCLUDE lines and none of them matched, we should not print this line.
-        return false;
+        return (false, cur); // cur here is not depended on yet 20230623
     }
-    return cur != LineFilterResult::Exclude;
+    return (cur != LineFilterResult::Exclude, cur);
 }
 
 // TODO add coloring and highlighting.
@@ -121,21 +122,50 @@ pub fn get_visible_lines<'a, 'b>(
     let mut used_cols = 0;
     let mut line_start = 0;
     let mut lines = Vec::with_capacity(1000);
-    let maybe_add_line = |lines: &mut Vec<DispLine>,
+    let mut in_bad_record = false;
+    let mut maybe_add_line = |lines: &mut Vec<DispLine>,
                           ending_index: usize,
                           displayed_rows: &mut u16,
                           rows_for_this_line: &u16,
                           line_start: usize| {
         let line = source[line_start..ending_index].to_str_lossy().into_owned();
-        if line_allowed(filters, &line) {
+        // TODO Do we need to allow IN filters which match part of a record to display the whole record?
+        // IMO no, you can add a new in filter for the line you're interested in, with higher priority.
+        let is_new_record = {
+            if line_start != ending_index {
+                let first_char = source[line_start];
+                first_char != b'\t' && first_char != b' '
+            } else {
+                false
+            }
+        };
+        if is_new_record {
+            in_bad_record = false;
+        }
+        let matches = line_allowed(filters, &line);
+        let should_print = if in_bad_record {
+            matches.1 == LineFilterResult::Include // Must have exactly matched an include line if it's a part of an otherwise filtered record.
+        } else {
+            matches.0  // Otherwise fallback to the general rules for filters.
+        };
+        if should_print {
             lines.push(DispLine {
                 file_loc: (offset_into_big + line_start, offset_into_big + ending_index),
                 line: line.into(),
             });
             *displayed_rows += rows_for_this_line + 1;
-            return;
+        } else {
+            in_bad_record = true;
         }
+        // return false;
     };
+    // We need some concept of 'records' rather than lines so that we can filter multi-line log msgs easily.
+    // A good generic (if not fast) approach seems to be a newline followed by a timestamp (since we currently assume that timestamps begin the line)
+    // Right now parsing a timestamp is kinda slow (50usec) but this can be vastly improved by remembering what format worked last time and using that first (or exclusively).
+    // Let's give it a shot and see how useable this approach is. Keep in mind that we only need to fill the screen.
+    // As another approximation, we could say that indented lines following a true-start are part of the previous record, as are lines that look like '\n}' or '\n]'.
+    // This approach works for me today without having to attempt parsing timestamps over and over :-) We would anyways have checked 'does this line start with a number'
+    // before continuing to attempt timestamp parsing.
     // let b = source.as_bytes();
     // Assumes always linewrap, one byte == one visible width char.
     for (start, end, c) in source.char_indices() {
