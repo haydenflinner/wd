@@ -48,7 +48,7 @@ impl GoScreen {
             return Some(CursorMove::Timestamp(res.unwrap()));
         }
 
-        return None;
+        None
     }
 
     fn validate_and_store(&mut self) {
@@ -57,7 +57,7 @@ impl GoScreen {
 
     fn validate_entry(&self) -> Option<CursorMove> {
         let contents = self.txt.contents();
-        if contents.len() == 0 {
+        if contents.is_empty() {
             None
         } else {
             // I wish it didn't have to be this way, Windows...
@@ -81,7 +81,7 @@ impl GoScreen {
     }
 
     fn valid_entry(&self) -> bool {
-        if self.txt.contents().len() == 0 {
+        if self.txt.contents().is_empty() {
             true
         } else {
             self.destination.is_some()

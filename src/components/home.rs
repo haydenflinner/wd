@@ -65,14 +65,14 @@ fn line_allowed(filters: &Vec<LineFilter>, line: &str) -> (bool, LineFilterResul
         // If there are any MUST_INCLUDE lines and none of them matched, we should not print this line.
         return (false, cur); // cur here is not depended on yet 20230623
     }
-    return (cur != LineFilterResult::Exclude, cur);
+    (cur != LineFilterResult::Exclude, cur)
 }
 
 // TODO add coloring and highlighting.
 // fn fmt_visible_lines(lines: Vec<Line>) -> Vec<Line> { lines }
 
 pub fn highlight_lines(lines: &mut Vec<DispLine>, needle: &str) {
-    if needle.len() == 0 {
+    if needle.is_empty() {
         return;
     }
     for line in lines {
@@ -106,9 +106,9 @@ pub fn highlight_lines(lines: &mut Vec<DispLine>, needle: &str) {
     }
 }
 
-pub fn get_visible_lines<'a, 'b>(
-    source: &'a BStr,
-    filters: &'b Vec<LineFilter>,
+pub fn get_visible_lines(
+    source: &BStr,
+    filters: &Vec<LineFilter>,
     rows: u16,
     cols: u16,
     offset_into_big: usize,
@@ -219,7 +219,7 @@ pub fn get_visible_lines<'a, 'b>(
         line_start,
     );
     // }
-    return lines;
+    lines
 }
 
 /// Find first character of line starting at or before byte_offset.
@@ -230,14 +230,14 @@ fn find_line_starting_before(s: &[u8], byte_offset: usize) -> usize {
         .rev()
         .enumerate()
         .find_map(|(index, val)| match val {
-            val if *val == ('\n' as u8) => Some(index),
+            val if *val == b'\n' => Some(index),
             _ => None,
         })
         .unwrap_or(byte_offset);
     // 4096 -> 3486 should find byte 10. TODO Unit test.
     let idx = byte_offset - bytes_before_offset_of_newline;
-    assert!(idx == 0 || s[idx - 1] == ('\n' as u8));
-    return idx;
+    assert!(idx == 0 || s[idx - 1] == b'\n');
+    idx
 }
 
 fn find_start_line_pct(mmap: &Mmap, pct: f64) -> usize {
@@ -280,7 +280,7 @@ fn find_date_before(
 ) -> Option<(FileOffset, DateTime<Utc>)> {
     let mut lines_try = 1000;
     while lines_try > 0 {
-        let line_start = find_line_starting_before(&s, byte_offset);
+        let line_start = find_line_starting_before(s, byte_offset);
         let maybe_ts = parse_date_starting_at(s, line_start, default_date);
         match maybe_ts {
             Some(ts) => {
@@ -522,7 +522,7 @@ fn bin_search(s: &[u8], dt: &DateTime<Utc>) -> Result<FileOffset, TsBinSearchErr
             }
         }
     }
-    return Ok(middle);
+    Ok(middle)
 }
 
 pub struct DispLine {
@@ -723,7 +723,7 @@ impl Home {
 
     fn update_view(&mut self) {
         self.view = get_visible_lines(
-            &self.mmap[self.byte_cursor..].as_bstr(),
+            self.mmap[self.byte_cursor..].as_bstr(),
             &self.filter_screen.items,
             200,
             600,
