@@ -4,11 +4,10 @@ use std::{
     str::pattern::{Pattern, Searcher},
 };
 
-use bstr::{BStr, ByteSlice};
-use chrono::{DateTime, Duration, Local, TimeZone, Utc, NaiveDate};
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
-use regex::Regex;
 use crate::dateparser::datetime::Parse;
+use bstr::{BStr, ByteSlice};
+use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Utc};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use log::{debug, info, warn};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -16,6 +15,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph, Wrap},
 };
+use regex::Regex;
 // use tracing::debug;
 use memmap::Mmap;
 use tui_textarea::TextArea;
@@ -47,7 +47,7 @@ enum LineFilterResult {
     Indifferent,
 }
 
-fn line_allowed(filters: &Vec<LineFilter>, line: &str) -> (bool, LineFilterResult)  {
+fn line_allowed(filters: &Vec<LineFilter>, line: &str) -> (bool, LineFilterResult) {
     let mut cur = LineFilterResult::Indifferent;
     let get_active_filters = || filters.iter().filter(|f| f.enabled);
     for filter in get_active_filters() {
@@ -125,10 +125,10 @@ pub fn get_visible_lines<'a, 'b>(
     let mut lines = Vec::with_capacity(1000);
     let mut in_bad_record = false;
     let mut maybe_add_line = |lines: &mut Vec<DispLine>,
-                          ending_index: usize,
-                          displayed_rows: &mut u16,
-                          rows_for_this_line: &u16,
-                          line_start: usize| {
+                              ending_index: usize,
+                              displayed_rows: &mut u16,
+                              rows_for_this_line: &u16,
+                              line_start: usize| {
         let line = source[line_start..ending_index].to_str_lossy().into_owned();
         // TODO Do we need to allow IN filters which match part of a record to display the whole record?
         // IMO no, you can add a new in filter for the line you're interested in, with higher priority.
@@ -147,7 +147,7 @@ pub fn get_visible_lines<'a, 'b>(
         let should_print = if in_bad_record {
             matches.1 == LineFilterResult::Include // Must have exactly matched an include line if it's a part of an otherwise filtered record.
         } else {
-            matches.0  // Otherwise fallback to the general rules for filters.
+            matches.0 // Otherwise fallback to the general rules for filters.
         };
         if should_print {
             lines.push(DispLine {
@@ -246,7 +246,11 @@ fn find_start_line_pct(mmap: &Mmap, pct: f64) -> usize {
     find_line_starting_before(mmap, going_to)
 }
 
-fn parse_date_starting_at(s: &[u8], start_offset: FileOffset, default_date: NaiveDate) -> Option<DateTime<Utc>> {
+fn parse_date_starting_at(
+    s: &[u8],
+    start_offset: FileOffset,
+    default_date: NaiveDate,
+) -> Option<DateTime<Utc>> {
     // TODO .. need to use min or is that implicit like Python?
     let s = std::str::from_utf8(&s[start_offset..min(start_offset + 100, s.len())]).unwrap();
     let second_space_idx = s
@@ -269,7 +273,11 @@ fn parse_date_starting_at(s: &[u8], start_offset: FileOffset, default_date: Naiv
     crate::dateparser::parse_with_timezone(s, &Local, Some(default_date)).ok()
 }
 
-fn find_date_before(s: &[u8], mut byte_offset: FileOffset, default_date: NaiveDate) -> Option<(FileOffset, DateTime<Utc>)> {
+fn find_date_before(
+    s: &[u8],
+    mut byte_offset: FileOffset,
+    default_date: NaiveDate,
+) -> Option<(FileOffset, DateTime<Utc>)> {
     let mut lines_try = 1000;
     while lines_try > 0 {
         let line_start = find_line_starting_before(&s, byte_offset);
@@ -346,28 +354,40 @@ mod tests {
     #[test]
     fn test_allowed() {
         assert!(line_allowed(&vec!(), "Lol").0);
-        assert!(!line_allowed(
-            &vec!(LineFilter::new("Lol".to_string(), FilterType::Out)),
-            "Lol"
-        ).0);
-        assert!(line_allowed(
-            &vec!(LineFilter::new("Lol".to_string(), FilterType::In)),
-            "Lol"
-        ).0);
-        assert!(!line_allowed(
-            &vec!(
-                LineFilter::new("Lol".to_string(), FilterType::In),
-                LineFilter::new("Lol".to_string(), FilterType::Out),
-            ),
-            "Lol"
-        ).0);
-        assert!(line_allowed(
-            &vec!(
-                LineFilter::new("Lol".to_string(), FilterType::Out),
-                LineFilter::new("Lol".to_string(), FilterType::In),
-            ),
-            "Lol"
-        ).0);
+        assert!(
+            !line_allowed(
+                &vec!(LineFilter::new("Lol".to_string(), FilterType::Out)),
+                "Lol"
+            )
+            .0
+        );
+        assert!(
+            line_allowed(
+                &vec!(LineFilter::new("Lol".to_string(), FilterType::In)),
+                "Lol"
+            )
+            .0
+        );
+        assert!(
+            !line_allowed(
+                &vec!(
+                    LineFilter::new("Lol".to_string(), FilterType::In),
+                    LineFilter::new("Lol".to_string(), FilterType::Out),
+                ),
+                "Lol"
+            )
+            .0
+        );
+        assert!(
+            line_allowed(
+                &vec!(
+                    LineFilter::new("Lol".to_string(), FilterType::Out),
+                    LineFilter::new("Lol".to_string(), FilterType::In),
+                ),
+                "Lol"
+            )
+            .0
+        );
     }
 
     #[test]
@@ -399,7 +419,8 @@ mod tests {
         assert_eq!(
             bin_search(
                 LINES.as_bytes(),
-                &Local.datetime_from_str("2022-03-22T08:51:08", "%Y-%m-%dT%H:%M:%S")
+                &Local
+                    .datetime_from_str("2022-03-22T08:51:08", "%Y-%m-%dT%H:%M:%S")
                     .unwrap()
                     .with_timezone(&Utc)
             )
@@ -413,7 +434,8 @@ mod tests {
         assert_eq!(
             bin_search(
                 LINES.as_bytes(),
-                &Local.datetime_from_str("2022-03-22T08:51:07", "%Y-%m-%dT%H:%M:%S")
+                &Local
+                    .datetime_from_str("2022-03-22T08:51:07", "%Y-%m-%dT%H:%M:%S")
                     .unwrap()
                     .with_timezone(&Utc)
             )
@@ -428,8 +450,9 @@ mod tests {
         assert_eq!(
             bin_search(
                 LINES.as_bytes(),
-                &Local.datetime_from_str("2022-03-22T08:51:09", "%Y-%m-%dT%H:%M:%S")
-                // &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:09Z")
+                &Local
+                    .datetime_from_str("2022-03-22T08:51:09", "%Y-%m-%dT%H:%M:%S")
+                    // &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:09Z")
                     .unwrap()
                     .with_timezone(&Utc)
             )
@@ -443,7 +466,8 @@ mod tests {
         assert_eq!(
             bin_search(
                 LINES.as_bytes(),
-                &Local.datetime_from_str("2022-03-22T08:51:00", "%Y-%m-%dT%H:%M:%S")
+                &Local
+                    .datetime_from_str("2022-03-22T08:51:00", "%Y-%m-%dT%H:%M:%S")
                     .unwrap()
                     .with_timezone(&Utc)
             )
@@ -716,7 +740,7 @@ impl Home {
             let s = capture.get(0).unwrap().as_str();
             match NaiveDate::parse_from_str(s, "%Y%m%d") {
                 Ok(nd) => return Some(nd),
-                Err(_) => {},
+                Err(_) => {}
             };
         }
         None
@@ -729,7 +753,11 @@ impl Component for Home {
         self.update_view();
         let byte_offset = find_line_starting_before(self.mmap.as_bstr(), self.mmap.len() - 1);
         let default_date = self.parse_filename_for_date(&self.filename);
-        let maybe_ts = find_date_before(self.mmap.as_bstr(), byte_offset, default_date.unwrap_or(Local::now().date_naive()));
+        let maybe_ts = find_date_before(
+            self.mmap.as_bstr(),
+            byte_offset,
+            default_date.unwrap_or(Local::now().date_naive()),
+        );
         self.today = match maybe_ts {
             Some((_, ts)) => Some(ts.date_naive()),
             None => default_date,

@@ -74,9 +74,7 @@ impl App {
                 // Block while holding home lock so we stop the draw thread.
                 let mut home = self.home.lock().await;
                 let event = self.events.next().await;
-                home
-                    .handle_events(event, &mut self.actions)
-                    .await?;
+                home.handle_events(event, &mut self.actions).await?;
                 let mut action = Some(self.actions.recv().await);
                 while action.is_some() {
                     action = home.dispatch(action.unwrap());

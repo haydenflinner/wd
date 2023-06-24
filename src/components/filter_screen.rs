@@ -36,7 +36,7 @@ impl FilterScreen<'_> {
             self.new.textarea.lines()[0].clone(),
             self.new_filter_type.unwrap(),
         ));
-        self.state.select(Some(self.items.len()-1));
+        self.state.select(Some(self.items.len() - 1));
         self.new_filter_type = None;
         self.new.textarea.delete_line_by_head();
         info!("Added new filter: {:?}", self.items[self.items.len() - 1]);
@@ -87,8 +87,8 @@ impl Component for FilterScreen<'_> {
 
     fn dispatch(&mut self, action: Action) -> Option<Action> {
         let curr = self.state.selected();
-        let next = curr.map(|c| if c == 0 { self.items.len() - 1} else { c - 1 });
-        let prev = curr.map(|c| if c == self.items.len()-1 { 0 } else { c + 1 });
+        let next = curr.map(|c| if c == 0 { self.items.len() - 1 } else { c - 1 });
+        let prev = curr.map(|c| if c == self.items.len() - 1 { 0 } else { c + 1 });
         let mut close_filters = false;
         match action {
             Action::FilterListAction(fa) => {
@@ -105,16 +105,16 @@ impl Component for FilterScreen<'_> {
                     FilterListAction::ConfirmNew => {
                         self.confirm_new_filter();
                         close_filters = true;
-                    },
+                    }
                     FilterListAction::Toggle => {
                         if let Some(idx) = curr {
                             self.items[idx].enabled = !self.items[idx].enabled;
                         }
-                    },
-                     /*FilterListAction::TextEntry(_) => {
-                        let o = self.new.dispatch(action);
-                        assert_eq!(o, None);
-                      },*/
+                    }
+                    /*FilterListAction::TextEntry(_) => {
+                      let o = self.new.dispatch(action);
+                      assert_eq!(o, None);
+                    },*/
                 }
             }
             Action::TextEntry(_) => {
@@ -145,24 +145,25 @@ impl Component for FilterScreen<'_> {
             rect
         };
         let fmt_status = |status: bool| {
-            if status { " \u{25cf} | " } else { " \u{25cc} | " }
+            if status {
+                " \u{25cf} | "
+            } else {
+                " \u{25cc} | "
+            }
         };
         let items: Vec<_> = self
             .items
             .iter()
             .map(|i| {
-                ListItem::new(
-                    fmt_status(i.enabled).to_owned() + &i.needle.clone()
-                ).style(Style::default().bg(
-                    if !i.enabled {
+                ListItem::new(fmt_status(i.enabled).to_owned() + &i.needle.clone()).style(
+                    Style::default().bg(if !i.enabled {
                         Color::DarkGray
-                    }
-                    else if i.filter_type.include() {
+                    } else if i.filter_type.include() {
                         Color::Green
                     } else {
                         Color::Red
-                    },
-                ))
+                    }),
+                )
             })
             .collect();
         /*let items = [

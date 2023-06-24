@@ -1,7 +1,6 @@
 #![allow(deprecated)]
 // Forked from https://github.com/waltzofpearls/dateparser/commit/edb2e7cde68bc450d602046e3418b8d6f5d0a9ff
 
-
 use crate::dateparser::timezone;
 use anyhow::{anyhow, Result};
 use chrono::prelude::*;
@@ -21,8 +20,16 @@ where
 {
     /// Create a new instrance of [`Parse`] with a custom parsing timezone that handles the
     /// datetime string without time offset.
-    pub fn new(tz: &'z Tz2, default_time: Option<NaiveTime>, default_day: Option<NaiveDate>) -> Self {
-        Self { tz, default_time, default_day: default_day.unwrap_or(Local::now().with_timezone(tz).date_naive()) }
+    pub fn new(
+        tz: &'z Tz2,
+        default_time: Option<NaiveTime>,
+        default_day: Option<NaiveDate>,
+    ) -> Self {
+        Self {
+            tz,
+            default_time,
+            default_day: default_day.unwrap_or(Local::now().with_timezone(tz).date_naive()),
+        }
     }
 
     /// This method tries to parse the input datetime string with a list of accepted formats. See
@@ -329,25 +336,28 @@ where
     fn hms(&self, input: &str) -> Option<Result<DateTime<Utc>>> {
         lazy_static! {
             static ref RE: Regex =
-                Regex::new(r"^[0-9]{1,2}:[0-9]{2}(:[0-9]{2}(\.[0-9]{1,9})?)?\s*(am|pm|AM|PM)?$").unwrap();
+                Regex::new(r"^[0-9]{1,2}:[0-9]{2}(:[0-9]{2}(\.[0-9]{1,9})?)?\s*(am|pm|AM|PM)?$")
+                    .unwrap();
         }
         if !RE.is_match(input) {
             return None;
         }
 
-        let today = self.default_day;// .with_timezone(self.tz);
+        let today = self.default_day; // .with_timezone(self.tz);
         NaiveTime::parse_from_str(input, "%H:%M:%S%.f")
             .or_else(|_| NaiveTime::parse_from_str(input, "%H:%M"))
             .or_else(|_| NaiveTime::parse_from_str(input, "%I:%M:%S %P"))
             .or_else(|_| NaiveTime::parse_from_str(input, "%I:%M %P"))
             .ok()
             // .unwrap_or_else(|| Err(anyhow!("{} did not match any formats.", input)))
-            .map(|parsed| match self.tz.from_local_datetime(&today.and_time(parsed)) {
-                chrono::LocalResult::None => Err(anyhow!("no valid time")),
-                chrono::LocalResult::Single(t) => Ok(t.with_timezone(&Utc)),
-                chrono::LocalResult::Ambiguous(t1, t2) => Ok(t1.with_timezone(&Utc)),
-            })
-            // .map(Ok)
+            .map(
+                |parsed| match self.tz.from_local_datetime(&today.and_time(parsed)) {
+                    chrono::LocalResult::None => Err(anyhow!("no valid time")),
+                    chrono::LocalResult::Single(t) => Ok(t.with_timezone(&Utc)),
+                    chrono::LocalResult::Ambiguous(t1, t2) => Ok(t1.with_timezone(&Utc)),
+                },
+            )
+        // .map(Ok)
     }
 
     // hh:mm:ss z

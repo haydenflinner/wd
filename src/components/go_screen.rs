@@ -1,7 +1,7 @@
 use std::panic;
 
 use anyhow::Result;
-use chrono::{Local, DateTime, Utc, NaiveDate};
+use chrono::{DateTime, Local, NaiveDate, Utc};
 use crossterm::{
     cursor::MoveToPreviousLine,
     event::{KeyCode, KeyEvent},
