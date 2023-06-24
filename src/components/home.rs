@@ -5,9 +5,10 @@ use std::{
 };
 
 use bstr::{BStr, ByteSlice};
-use chrono::{DateTime, Duration, Local, TimeZone, Utc};
+use chrono::{DateTime, Duration, Local, TimeZone, Utc, NaiveDate};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
-use dateparser::datetime::Parse;
+use regex::Regex;
+use crate::dateparser::datetime::Parse;
 use log::{debug, info, warn};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -245,7 +246,7 @@ fn find_start_line_pct(mmap: &Mmap, pct: f64) -> usize {
     find_line_starting_before(mmap, going_to)
 }
 
-fn parse_date_starting_at(s: &[u8], start_offset: FileOffset) -> Option<DateTime<Utc>> {
+fn parse_date_starting_at(s: &[u8], start_offset: FileOffset, default_date: NaiveDate) -> Option<DateTime<Utc>> {
     // TODO .. need to use min or is that implicit like Python?
     let s = std::str::from_utf8(&s[start_offset..min(start_offset + 100, s.len())]).unwrap();
     let second_space_idx = s
@@ -257,22 +258,22 @@ fn parse_date_starting_at(s: &[u8], start_offset: FileOffset) -> Option<DateTime
         .nth(1)?;
     let s = &s[0..second_space_idx];
     debug!("Parsing: {}", s);
-    // match dateparser::parse(std::str::from_utf8(&s).unwrap()) {
-    /*match dateparser::parse(s) {
+    // match crate::dateparser::parse(std::str::from_utf8(&s).unwrap()) {
+    /*match crate::dateparser::parse(s) {
         Ok(dt) => dt,
         _ => panic!(),
     }*/
 
     // Parse::new(tz, Utc::now().time()).parse(input)
     // TODO set context with this: https://github.com/waltzofpearls/dateparser/issues/39
-    dateparser::parse_with_timezone(s, &Local).ok()
+    crate::dateparser::parse_with_timezone(s, &Local, Some(default_date)).ok()
 }
 
-fn find_date_before(s: &[u8], mut byte_offset: FileOffset) -> Option<(FileOffset, DateTime<Utc>)> {
+fn find_date_before(s: &[u8], mut byte_offset: FileOffset, default_date: NaiveDate) -> Option<(FileOffset, DateTime<Utc>)> {
     let mut lines_try = 1000;
     while lines_try > 0 {
         let line_start = find_line_starting_before(&s, byte_offset);
-        let maybe_ts = parse_date_starting_at(s, line_start);
+        let maybe_ts = parse_date_starting_at(s, line_start, default_date);
         match maybe_ts {
             Some(ts) => {
                 return Some((line_start, ts));
@@ -344,29 +345,29 @@ mod tests {
 
     #[test]
     fn test_allowed() {
-        assert!(line_allowed(&vec!(), "Lol"));
+        assert!(line_allowed(&vec!(), "Lol").0);
         assert!(!line_allowed(
             &vec!(LineFilter::new("Lol".to_string(), FilterType::Out)),
             "Lol"
-        ));
+        ).0);
         assert!(line_allowed(
             &vec!(LineFilter::new("Lol".to_string(), FilterType::In)),
             "Lol"
-        ));
+        ).0);
         assert!(!line_allowed(
             &vec!(
                 LineFilter::new("Lol".to_string(), FilterType::In),
                 LineFilter::new("Lol".to_string(), FilterType::Out),
             ),
             "Lol"
-        ));
+        ).0);
         assert!(line_allowed(
             &vec!(
                 LineFilter::new("Lol".to_string(), FilterType::Out),
                 LineFilter::new("Lol".to_string(), FilterType::In),
             ),
             "Lol"
-        ));
+        ).0);
     }
 
     #[test]
@@ -384,11 +385,21 @@ mod tests {
     }
 
     #[test]
+    fn test_dt() {
+        // let dt = crate::dateparser::parse_with_timezone("09:42:21.0090980809 WORD", &Local);
+        // TODO switch to qsv-dateparser to get support for fractions on the timestamps?
+        // Or just hardcode a filter out of them, because we don't need the tenths?
+        assert!(crate::dateparser::parse_with_timezone("09:42:21", &Local, None).is_ok());
+        assert!(crate::dateparser::parse_with_timezone("09:42:21.401", &Local, None).is_ok());
+        assert!(crate::dateparser::parse_with_timezone("09:42:21.99923", &Local, None).is_ok());
+    }
+
+    #[test]
     fn test_second() {
         assert_eq!(
             bin_search(
                 LINES.as_bytes(),
-                &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:08Z")
+                &Local.datetime_from_str("2022-03-22T08:51:08", "%Y-%m-%dT%H:%M:%S")
                     .unwrap()
                     .with_timezone(&Utc)
             )
@@ -402,7 +413,7 @@ mod tests {
         assert_eq!(
             bin_search(
                 LINES.as_bytes(),
-                &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:07Z")
+                &Local.datetime_from_str("2022-03-22T08:51:07", "%Y-%m-%dT%H:%M:%S")
                     .unwrap()
                     .with_timezone(&Utc)
             )
@@ -413,10 +424,12 @@ mod tests {
 
     #[test]
     fn test_after() {
+        // env_logger::init();
         assert_eq!(
             bin_search(
                 LINES.as_bytes(),
-                &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:09Z")
+                &Local.datetime_from_str("2022-03-22T08:51:09", "%Y-%m-%dT%H:%M:%S")
+                // &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:09Z")
                     .unwrap()
                     .with_timezone(&Utc)
             )
@@ -430,7 +443,7 @@ mod tests {
         assert_eq!(
             bin_search(
                 LINES.as_bytes(),
-                &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:00Z")
+                &Local.datetime_from_str("2022-03-22T08:51:00", "%Y-%m-%dT%H:%M:%S")
                     .unwrap()
                     .with_timezone(&Utc)
             )
@@ -464,7 +477,7 @@ fn bin_search(s: &[u8], dt: &DateTime<Utc>) -> Result<FileOffset, TsBinSearchErr
     while low <= high {
         middle = (high + low) / 2;
         info!("Bin search: low: {}, mid: {}, high: {}", low, middle, high);
-        match find_date_before(s, middle) {
+        match find_date_before(s, middle, dt.date_naive()) {
             Some((line_start, ts)) => {
                 info!("Comparing tses {} and {}", ts, dt);
                 match ts.cmp(dt) {
@@ -510,9 +523,10 @@ pub struct Home {
 
     pub counter: usize,
 
+    filename: String,
     mmap: Mmap,
     byte_cursor: usize,
-    today: Option<DateTime<Utc>>,
+    today: Option<NaiveDate>,
 
     /// TODO g to open goto menu, which offers typign in a timestamp, a % amount, or pressing g again to go to beginning.
     go_screen: GoScreen,
@@ -532,12 +546,13 @@ pub struct Home {
 }
 
 impl Home {
-    pub fn new(mmap: Mmap) -> Self {
+    pub fn new(filename: String, mmap: Mmap) -> Self {
         Self {
             is_running: false,
             show_logger: false,
             logger: Logger::default(),
             counter: 0,
+            filename,
             mmap,
             byte_cursor: 0,
             today: None,
@@ -581,16 +596,16 @@ impl Home {
         // info!("Set cursor to {}", self.byte_cursor);
     }
 
-    pub fn goto_dt(&mut self, mut dt: DateTime<Utc>) {
+    pub fn goto_dt(&mut self, dt: DateTime<Utc>) {
         // If we successfully parsed a
-        if let Some(file_today) = self.today {
-            let secs_off = (dt.date() - file_today.date()).num_seconds();
+        /*if let Some(file_today) = self.today {
+            let secs_off = (dt.date_naive() - file_today).num_seconds();
             match Utc.timestamp_opt(dt.timestamp() - secs_off, 0) {
                 chrono::LocalResult::None => {}
                 chrono::LocalResult::Single(ts) => dt = ts,
                 chrono::LocalResult::Ambiguous(_, _) => {}
             }
-        }
+        }*/
         let spot = bin_search(self.mmap.as_bstr(), &dt);
         match spot {
             Ok(cursor) => self.byte_cursor = cursor,
@@ -693,6 +708,19 @@ impl Home {
         highlight_lines(&mut self.view, &self.last_search);
         // &self.filter_screen.items, 1000, 1000).iter_mut().map(|s| s.line.clone()).collect();
     }
+
+    fn parse_filename_for_date(&self, filename: &str) -> Option<NaiveDate> {
+        let re = Regex::new(r"\b\d{8}\b").unwrap();
+
+        for capture in re.captures_iter(filename) {
+            let s = capture.get(0).unwrap().as_str();
+            match NaiveDate::parse_from_str(s, "%Y%m%d") {
+                Ok(nd) => return Some(nd),
+                Err(_) => {},
+            };
+        }
+        None
+    }
 }
 
 impl Component for Home {
@@ -700,11 +728,14 @@ impl Component for Home {
         self.is_running = true;
         self.update_view();
         let byte_offset = find_line_starting_before(self.mmap.as_bstr(), self.mmap.len() - 1);
-        let maybe_ts = find_date_before(self.mmap.as_bstr(), byte_offset);
-        if let Some((_, ts)) = maybe_ts {
-            self.today = Some(ts);
-        }
-        Ok(())
+        let default_date = self.parse_filename_for_date(&self.filename);
+        let maybe_ts = find_date_before(self.mmap.as_bstr(), byte_offset, default_date.unwrap_or(Local::now().date_naive()));
+        self.today = match maybe_ts {
+            Some((_, ts)) => Some(ts.date_naive()),
+            None => default_date,
+        };
+        self.go_screen.set_today(self.today);
+        self.go_screen.init()
     }
 
     fn on_key_event(&self, key: KeyEvent) -> Action {

@@ -28,9 +28,9 @@ impl App {
         ));
         let events = EventHandler::new(tick_rate);
         let actions = ActionHandler::new();
-        let file = File::open(filename).unwrap();
+        let file = File::open(filename.clone()).unwrap();
         let mmap = unsafe { MmapOptions::new().map(&file).unwrap() };
-        let home = Arc::new(Mutex::new(Home::new(mmap)));
+        let home = Arc::new(Mutex::new(Home::new(filename, mmap)));
 
         Self {
             tui,

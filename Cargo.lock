@@ -453,18 +453,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dateparser"
-version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "63256433b74eaddb73000f877bd9f4e6cea389bb7f64f349c6eb272044aa6a71"
-dependencies = [
- "anyhow",
- "chrono",
- "lazy_static",
- "regex 1.6.0",
-]
-
-[[package]]
 name = "directories"
 version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1649,10 +1637,10 @@ dependencies = [
  "colored",
  "criterion",
  "crossterm",
- "dateparser",
  "directories",
  "env_logger",
  "futures",
+ "lazy_static",
  "log",
  "memmap",
  "ratatui",

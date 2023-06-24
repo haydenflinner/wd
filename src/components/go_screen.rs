@@ -1,7 +1,7 @@
 use std::panic;
 
 use anyhow::Result;
-use chrono::Local;
+use chrono::{Local, DateTime, Utc, NaiveDate};
 use crossterm::{
     cursor::MoveToPreviousLine,
     event::{KeyCode, KeyEvent},
@@ -27,6 +27,7 @@ pub struct GoScreen {
     pub show: bool,
     txt: TextEntry<'static>,
     destination: Option<CursorMove>,
+    today: Option<NaiveDate>,
 }
 
 impl GoScreen {
@@ -42,7 +43,7 @@ impl GoScreen {
             return Some(CursorMove::Percentage(dest[..dest.len() - 1].parse().ok()?));
         }
 
-        let res = dateparser::parse_with_timezone(dest, &Local).ok();
+        let res = crate::dateparser::parse_with_timezone(dest, &Local, self.today).ok();
         if res.is_some() {
             return Some(CursorMove::Timestamp(res.unwrap()));
         }
@@ -85,6 +86,10 @@ impl GoScreen {
         } else {
             self.destination.is_some()
         }
+    }
+
+    pub fn set_today(&mut self, today: Option<NaiveDate>) {
+        self.today = today;
     }
 }
 
