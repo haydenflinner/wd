@@ -612,6 +612,10 @@ impl Home {
         // // assert!(self.mmap[byte_til_newline])
         // let byte_after_newline = min(self.mmap.len(), self.byte_cursor + bytes_til_newline + 1);
 
+        if self.view.is_empty() {
+            info!("Tried to go past end of visible file!");
+            return;
+        }
         self.byte_cursor = self.view[0].file_loc.1 + 1;
         if self.byte_cursor >= self.mmap.len() {
             self.byte_cursor = self.mmap.len() - 1;
@@ -657,44 +661,63 @@ impl Home {
         self.byte_cursor = find_line_starting_before(&self.mmap, self.mmap.len());
     }
 
-    pub fn new_search(&mut self) {
-        let needle = &self.search_screen.textarea.lines()[0];
-        let haystack = &self.mmap[self.byte_cursor..];
-        let result = haystack.find(needle);
-        self.last_search = needle.clone();
-        match result {
-            Some(idx) => {
-                self.byte_cursor += find_line_starting_before(haystack, idx);
-                self.search_visits.push(self.byte_cursor);
-                // https://github.com/rhysd/tui-textarea/blob/main/src/highlight.rs#L101
-                // Great reference for using Spans to highlight lines.
-                // self.search_screen.textarea.input().th
-                // self.search_screen.textarea.set_search_pattern(needle);
+    pub fn put_cursor_on_line_search(&mut self, needle: &str) {
+        let mut cursor = self.byte_cursor;
+        let mut last_cursor = usize::MAX;
+        info!("Search starting at {:?}", cursor);
+        loop {
+            let haystack = &self.mmap[self.byte_cursor..];
+            let result = haystack.find(needle);
+            self.last_search = needle.to_owned();
+            if cursor == last_cursor {
+                return;
             }
-            None => info!("Nothing found with term: {:?}", needle),
+            last_cursor = cursor;
+            match result {
+                Some(idx) => {
+                    let maybe_cursor = self.byte_cursor + find_line_starting_before(haystack, idx);
+                    if !line_allowed(
+                        &self.filter_screen.items,
+                        // TODO Explicitly search to the next newline only
+                        &self.mmap[maybe_cursor..self.mmap.len().max(maybe_cursor + 4096)]
+                            .to_str_lossy(),
+                    )
+                    .0
+                    {
+                        info!("Skipping line starting at {} due to filter.", maybe_cursor);
+                        cursor = maybe_cursor;
+                        continue;
+                    }
+                    self.byte_cursor = maybe_cursor;
+                    self.search_visits.push(self.byte_cursor);
+                    info!("Found line starting at {}", maybe_cursor);
+                    return;
+                    // https://github.com/rhysd/tui-textarea/blob/main/src/highlight.rs#L101
+                    // Great reference for using Spans to highlight lines.
+                    // self.search_screen.textarea.input().th
+                    // self.search_screen.textarea.set_search_pattern(needle);
+                }
+                None => {
+                    info!("Nothing found with term: {:?}", needle);
+                    return;
+                }
+            }
         }
-        // TODO Store .show within the textentry, and move cursor to end before delete (in case press enter midway thru line)
+    }
+
+    pub fn new_search(&mut self) {
+        let needle = &self.search_screen.textarea.lines()[0].clone();
         self.search_screen.textarea.delete_line_by_head();
+        self.put_cursor_on_line_search(needle);
+        // TODO Store .show within the textentry, and move cursor to end before delete (in case press enter midway thru line)
     }
 
     pub fn repeat_search(&mut self, direction: crate::action::Direction) {
         match direction {
             crate::action::Direction::Next => {
-                self.next_line();
-                let needle = &self.last_search;
-                // let haystack = &self.mmap[self.byte_cursor..];
-                // TODO Note inconsistent behavior. When we run search, we will find things that aren't displayed on the current
-                // screen because .find() doesn't know about hidden lines.
-                // But when we repeat search, we will technically skip invisible lines before we repeat the above mistake.
-                let haystack = &self.mmap[self.byte_cursor..];
-                let result = haystack.find(needle);
-                match result {
-                    Some(idx) => {
-                        self.byte_cursor += find_line_starting_before(haystack, idx);
-                        self.search_visits.push(self.byte_cursor);
-                    }
-                    None => info!("Nothing found with term: {:?}", needle),
-                }
+                self.next_line(); // TODO go nowhere if search doesn't find anything.
+                let needle = self.last_search.clone();
+                self.put_cursor_on_line_search(&needle);
             }
             crate::action::Direction::Prev => {
                 // In less, pressing N runs the search bachwards. This can be quite slow.
@@ -702,6 +725,9 @@ impl Home {
                 // and only breaking down into lines after finding a match.
                 // For now, let's just let N only go backwards through already visited searches.
                 // Would be nice to implement ? search too, probably.
+                // TODO this .pop is destructive because then pressing n requires re-searching.
+                // best to fix this by replacing the dumb list of results with intelligent caching for
+                // 'user searched this term while in this byte range.'
                 match self.search_visits.pop() {
                     Some(idx) => self.byte_cursor = idx,
                     None => info!("Can't go back, reverse serach not yet supported!"),

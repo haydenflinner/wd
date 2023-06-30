@@ -81,6 +81,7 @@ impl Component for FilterScreen<'_> {
             KeyCode::Char('o') => Action::FilterListAction(FilterListAction::New(FilterType::Out)),
             // KeyCode::Char(' ') => Action::FilterListAction(FilterListAction::Toggle),
             KeyCode::Tab => Action::FilterListAction(FilterListAction::Toggle),
+            KeyCode::Char(' ') => Action::FilterListAction(FilterListAction::Toggle),
             _ => Action::Tick,
         }
     }
@@ -110,11 +111,10 @@ impl Component for FilterScreen<'_> {
                         if let Some(idx) = curr {
                             self.items[idx].enabled = !self.items[idx].enabled;
                         }
-                    }
-                    /*FilterListAction::TextEntry(_) => {
-                      let o = self.new.dispatch(action);
-                      assert_eq!(o, None);
-                    },*/
+                    } /*FilterListAction::TextEntry(_) => {
+                        let o = self.new.dispatch(action);
+                        assert_eq!(o, None);
+                      },*/
                 }
             }
             Action::TextEntry(_) => {

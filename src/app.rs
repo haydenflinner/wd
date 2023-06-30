@@ -1,5 +1,6 @@
-use std::fs::File;
+use std::sync::mpsc::channel;
 use std::sync::Arc;
+use std::{fs::File, sync::mpsc};
 
 use anyhow::{anyhow, Context, Result};
 use tokio::sync::Mutex;
@@ -57,7 +58,9 @@ impl App {
     pub async fn run(&mut self) -> Result<()> {
         let home = Arc::clone(&self.home);
         let tui = Arc::clone(&self.tui);
+        let (tx, rx) = channel::<()>();
         tokio::spawn(async move {
+            let mut sent = false;
             loop {
                 let mut h = home.lock().await;
                 let mut t = tui.lock().await;
@@ -66,9 +69,16 @@ impl App {
                         h.render(f, f.size());
                     })
                     .unwrap();
+                if !sent {
+                    sent = true;
+                    tx.send(()).unwrap();
+                }
             }
         });
 
+        rx.recv()?; // Wait for the first draw before we grab the home lock.
+                    // It might be nice to allow actions to be processed without interrupting
+                    // the main operations...
         loop {
             {
                 // Block while holding home lock so we stop the draw thread.

@@ -8,6 +8,8 @@ use tracing::{debug, error, info, trace};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilterType {
+    // It might be cool to have an ! button on filters,
+    // so we can say !In => if line includes this, it will show, no further filters apply.
     In,
     Out,
 }
