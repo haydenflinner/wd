@@ -1,16 +1,16 @@
 use std::{
     borrow::Cow,
     cmp::{max, min, Ordering},
-    str::pattern::{Pattern, Searcher},
+    str::pattern::{Pattern, Searcher}, sync::Arc,
 };
 
-use crate::dateparser::datetime::Parse;
+use crate::{dateparser::datetime::Parse, action::Direction};
 use bstr::{BStr, ByteSlice};
 use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use log::{debug, info, warn};
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph, Wrap},
@@ -29,11 +29,20 @@ use crate::action::{Action, CursorMove, FilterListAction, FilterType, LineFilter
 
 /// TODO In order:
 /// Profile ratatui, it seems they're slowing down our scrolls.
-/// 8. 'h' highlight menu, like search but sticks around
-///  4. Page up/down?
-///  5. Search-caching
 /// 7. Search interruption or asyncness.
-/// Autoskip
+/// 8. 'h' highlight menu, like search but sticks around
+/// 4. Page up/down?
+/// 5. Search-caching
+///     Probably a list of all search results ever shown ought to be fine, no human will view enough results to exhaust memory.
+/// 6. Avoid-filter-rework
+///      Right now when you press 'j' your filters rerun from the new cursor line. This is obviously suboptimal if you have filtered out a large portion of the file and would like to begin scrolling.
+///      It's not that big of a deal because you can always use `g` to skip deeper into the file, but would be nice to fix this.
+///      Probably keep a 'screen' copy of a bunch of lines detected in the file, and when `j` is pressed, add one to the end.
+///      We don't pop from the beginning until running out of mem, that way pressing 'k' stays fast too.
+///      If only storing vec of slices this will probably work forever.
+///      It may also be nice if e.g. adding another filter applied recursively rather than again from scratch, so you didn't rerun all of the filters just because one was added.
+///      This isn't such a big deal because we start the search where the cursor currently is, so the screen will display soon.
+/// 9. Autoskip
 /// DONE
 ///  1. Add j and k for scroll down and up.#
 ///  2. Complete filter in/out
@@ -252,7 +261,7 @@ fn parse_date_starting_at(
     default_date: NaiveDate,
 ) -> Option<DateTime<Utc>> {
     // TODO .. need to use min or is that implicit like Python?
-    let s = std::str::from_utf8(&s[start_offset..min(start_offset + 100, s.len())]).unwrap();
+    let s = std::str::from_utf8(&s[start_offset..min(start_offset + 100, s.len())]).ok()?;
     let second_space_idx = s
         .char_indices()
         .filter_map(|(index, char)| match char == ' ' {
@@ -526,7 +535,7 @@ fn bin_search(s: &[u8], dt: &DateTime<Utc>) -> Result<FileOffset, TsBinSearchErr
 }
 
 pub struct DispLine {
-    file_loc: (usize, usize),
+    file_loc: (usize, usize), // <-- [begin, end)
     // line: String,
     line: ratatui::text::Line<'static>,
 }
@@ -548,7 +557,7 @@ pub struct Home {
     pub counter: usize,
 
     filename: String,
-    mmap: Mmap,
+    mmap: Arc<Mmap>,
     byte_cursor: usize,
     today: Option<NaiveDate>,
 
@@ -570,7 +579,7 @@ pub struct Home {
 }
 
 impl Home {
-    pub fn new(filename: String, mmap: Mmap) -> Self {
+    pub fn new(filename: String, mmap: Arc<Mmap>) -> Self {
         Self {
             is_running: false,
             show_logger: false,
@@ -621,6 +630,27 @@ impl Home {
             self.byte_cursor = self.mmap.len() - 1;
             info!("Tried to go past end of file!");
         }
+
+
+        // Can swap to a linked list if really anal about it
+        self.view.remove(0);  // Technically this causes a shift of the vector but I don't care at the moment :-)
+        let lastline = self.view.last();
+        let lastline = match lastline {
+            Some(line) => line,
+            None => return,
+        };
+        // TODO document some invariants on these values. Do they point at the newline? One before? etc.
+        let next_line_starts_at = lastline.file_loc.1 + 1;
+        let next_line = get_visible_lines(
+            self.mmap[next_line_starts_at].as_bstr(),
+            &self.filter_screen.items,
+            1
+            600,
+            self.byte_cursor,
+        );
+        next_line.first().map(|x| self.view.push(x.clone()));
+        // TODO only re-highlight the newly added last line.
+        highlight_lines(&mut self.view, &self.last_search);
         // info!("Set cursor to {}", self.byte_cursor);
     }
 
@@ -923,13 +953,15 @@ impl Component for Home {
             }
             Action::Noop => {} // _ => {},
         }
-        if action != Action::Tick {
+        if action != Action::Tick && action != Action::CursorMove(CursorMove::OneLine(crate::action::Direction::Next)){
             self.update_view();
         }
         followup_action
     }
 
     fn render(&mut self, f: &mut Frame<'_>, rect: Rect) {
+        // TODO Cache `rect`
+        // here as last_rect. If it's same as before, don't rerender. But use rect dimensions to knwo what should be visible when adding newlines.
         let rect = if self.show_logger {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)

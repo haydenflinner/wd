@@ -1,6 +1,9 @@
+use std::fs::File;
+
 use anyhow::Result;
 use clap::Parser;
 use colored::Colorize;
+use memmap::MmapOptions;
 use tracing::error;
 use wd::{app::App, logging::initialize_logging, tui::Tui, utils::initialize_panic_handler};
 
@@ -17,7 +20,9 @@ struct Args {
 }
 
 async fn tui_main(tick_rate: u64, filename: String) -> Result<()> {
-    let mut app = App::new(tick_rate, filename);
+    let file = File::open(filename.clone()).unwrap();
+    let mmap = unsafe { MmapOptions::new().map(&file).unwrap() };
+    let mut app = App::new(tick_rate, filename, mmap);
     app.enter().await?;
     app.init().await?;
     app.run().await?;

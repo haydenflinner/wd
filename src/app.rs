@@ -23,15 +23,15 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(tick_rate: u64, filename: String) -> Self {
+    pub fn new(tick_rate: u64, filename: String, mmap: Mmap) -> Self {
+        let arc_mmap = Arc::new(mmap);
         let tui = Arc::new(Mutex::new(
             Tui::new().context(anyhow!("Unable to create TUI")).unwrap(),
         ));
         let events = EventHandler::new(tick_rate);
         let actions = ActionHandler::new();
-        let file = File::open(filename.clone()).unwrap();
-        let mmap = unsafe { MmapOptions::new().map(&file).unwrap() };
-        let home = Arc::new(Mutex::new(Home::new(filename, mmap)));
+
+        let home = Arc::new(Mutex::new(Home::new(filename, arc_mmap)));
 
         Self {
             tui,
@@ -59,6 +59,7 @@ impl App {
         let home = Arc::clone(&self.home);
         let tui = Arc::clone(&self.tui);
         let (tx, rx) = channel::<()>();
+        // let (slow_thread_sender, slow_thread_receiver) = mpsc::unbounded_channel();
         tokio::spawn(async move {
             let mut sent = false;
             loop {
