@@ -7,19 +7,19 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, terminal::Terminal};
 
 pub struct Tui {
-    pub terminal: Terminal<CrosstermBackend<std::io::Stderr>>,
+    pub terminal: Terminal<CrosstermBackend<std::io::Stdout>>,
 }
 
 impl Tui {
     pub fn new() -> Result<Self> {
-        let terminal = Terminal::new(CrosstermBackend::new(std::io::stderr()))?;
+        let terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
         Ok(Self { terminal })
     }
 
     pub fn enter(&self) -> Result<()> {
         crossterm::terminal::enable_raw_mode()?;
         crossterm::execute!(
-            std::io::stderr(),
+            std::io::stdout(),
             EnterAlternateScreen,
             EnableMouseCapture,
             cursor::Hide
@@ -29,7 +29,7 @@ impl Tui {
 
     pub fn exit(&self) -> Result<()> {
         crossterm::execute!(
-            std::io::stderr(),
+            std::io::stdout(),
             LeaveAlternateScreen,
             DisableMouseCapture,
             cursor::Show
