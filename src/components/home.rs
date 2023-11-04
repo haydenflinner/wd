@@ -534,6 +534,8 @@ fn bin_search(s: &[u8], dt: &DateTime<Utc>) -> Result<FileOffset, TsBinSearchErr
     Ok(middle)
 }
 
+
+#[derive(PartialEq, Eq, Clone)]
 pub struct DispLine {
     file_loc: (usize, usize), // <-- [begin, end)
     // line: String,
@@ -640,13 +642,13 @@ impl Home {
             None => return,
         };
         // TODO document some invariants on these values. Do they point at the newline? One before? etc.
-        let next_line_starts_at = lastline.file_loc.1 + 1;
+        let next_line_starts_at = lastline.file_loc.1;// + 1;
         let next_line = get_visible_lines(
-            self.mmap[next_line_starts_at].as_bstr(),
+            self.mmap[next_line_starts_at..next_line_starts_at+40000].as_bstr(),
             &self.filter_screen.items,
-            1
+            1,
             600,
-            self.byte_cursor,
+            next_line_starts_at,
         );
         next_line.first().map(|x| self.view.push(x.clone()));
         // TODO only re-highlight the newly added last line.
@@ -964,7 +966,7 @@ impl Component for Home {
         // here as last_rect. If it's same as before, don't rerender. But use rect dimensions to knwo what should be visible when adding newlines.
         let rect = if self.show_logger {
             let chunks = Layout::default()
-                .direction(Direction::Vertical)
+                .direction(ratatui::layout::Direction::Vertical)
                 // TODO Very slow scrolling with the log screen closed, but fast with it open.
                 // I guess this means tui is slowing us down? But can't profile.
                 .constraints([Constraint::Percentage(10), Constraint::Percentage(90)])
@@ -977,7 +979,7 @@ impl Component for Home {
 
         let rect = if self.show_filter_screen {
             let chunks = Layout::default()
-                .direction(Direction::Vertical)
+                .direction(ratatui::layout::Direction::Vertical)
                 .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
                 .split(rect);
             self.filter_screen.render(f, chunks[1]);
@@ -988,7 +990,7 @@ impl Component for Home {
 
         let rect = if self.show_search {
             let chunks = Layout::default()
-                .direction(Direction::Vertical)
+                .direction(ratatui::layout::Direction::Vertical)
                 .constraints([Constraint::Min(3), Constraint::Max(3)])
                 .split(rect);
             let block = Block::default()
@@ -1003,7 +1005,7 @@ impl Component for Home {
 
         let rect = if self.go_screen.show {
             let chunks = Layout::default()
-                .direction(Direction::Vertical)
+                .direction(ratatui::layout::Direction::Vertical)
                 .constraints([Constraint::Min(3), Constraint::Max(3)])
                 .split(rect);
             self.go_screen.render(f, chunks[1]);
