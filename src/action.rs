@@ -77,6 +77,7 @@ pub enum CursorMove {
     Timestamp(DateTime<Utc>),
     // /// E.g. "+1s, +5m". TODO
     // TimeDelta(TimeDelta),
+    Screenful(Direction),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

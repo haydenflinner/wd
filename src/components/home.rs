@@ -80,7 +80,7 @@ fn line_allowed(filters: &Vec<LineFilter>, line: &str) -> (bool, LineFilterResul
 // TODO add coloring and highlighting.
 // fn fmt_visible_lines(lines: Vec<Line>) -> Vec<Line> { lines }
 
-pub fn highlight_lines(lines: &mut Vec<DispLine>, needle: &str) {
+pub fn highlight_lines(lines: &mut [DispLine], needle: &str) {
     if needle.is_empty() {
         return;
     }
@@ -578,6 +578,9 @@ pub struct Home {
     // view: Vec<Cow<'mmap, str>>,
     view: Vec<DispLine>,
     // view: Vec<String>,
+
+    /// Used for PGDOWN/UP.
+    screen_size: Rect,
 }
 
 impl Home {
@@ -600,6 +603,7 @@ impl Home {
             search_screen: TextEntry::default(),
             last_search: String::default(),
             search_visits: Vec::default(),
+            screen_size: Rect { x: 0, y: 0, width: 1000, height: 1000 },
         }
     }
 
@@ -641,6 +645,7 @@ impl Home {
             None => return,
         };
         // TODO document some invariants on these values. Do they point at the newline? One before? etc.
+        // Intent is for [start, end), i.e. end index points one past the last valid index.
         let next_line_starts_at = lastline.file_loc.1;// + 1;
         let next_line = get_visible_lines(
             self.mmap[next_line_starts_at..].as_bstr(),
@@ -657,7 +662,8 @@ impl Home {
         self.view.remove(0);  // Technically this causes a shift of the vector but I don't care at the moment :-)
         self.view.push(first.clone());
         // TODO only re-highlight the newly added last line.
-        highlight_lines(&mut self.view, &self.last_search);
+        let last_idx = self.view.len() - 1;
+        highlight_lines(&mut self.view[last_idx..], &self.last_search);
         // info!("Set cursor to {}", self.byte_cursor);
     }
 
@@ -808,6 +814,16 @@ impl Home {
         }
         None
     }
+
+    fn move_screenful(&mut self, dir: Direction) {
+        let h = self.screen_size.height;
+        for _ in 0..h+1 {
+            match dir {
+                Direction::Prev => self.prev_line(),
+                Direction::Next => self.next_line(),
+            }
+        }
+    }
 }
 
 impl Component for Home {
@@ -869,6 +885,12 @@ impl Component for Home {
             KeyCode::Char('k') => {
                 Action::CursorMove(CursorMove::OneLine(crate::action::Direction::Prev))
             }
+            KeyCode::PageUp => { 
+                Action::CursorMove(CursorMove::Screenful(crate::action::Direction::Prev))
+            }
+            KeyCode::PageDown => { 
+                Action::CursorMove(CursorMove::Screenful(crate::action::Direction::Next))
+            }
             KeyCode::Down => {
                 Action::CursorMove(CursorMove::OneLine(crate::action::Direction::Next))
             }
@@ -912,6 +934,9 @@ impl Component for Home {
                 }
                 CursorMove::Percentage(pct) => {
                     self.goto_pct(pct);
+                }
+                CursorMove::Screenful(dir) => {
+                    self.move_screenful(dir);
                 }
             },
             Action::OpenGoScreen => {
@@ -969,6 +994,8 @@ impl Component for Home {
     fn render(&mut self, f: &mut Frame<'_>, rect: Rect) {
         // TODO Cache `rect`
         // here as last_rect. If it's same as before, don't rerender. But use rect dimensions to knwo what should be visible when adding newlines.
+        self.screen_size = rect;
+
         let rect = if self.show_logger {
             let chunks = Layout::default()
                 .direction(ratatui::layout::Direction::Vertical)
