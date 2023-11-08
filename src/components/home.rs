@@ -1,10 +1,11 @@
 use std::{
     borrow::Cow,
     cmp::{max, min, Ordering},
-    str::pattern::{Pattern, Searcher}, sync::Arc,
+    str::pattern::{Pattern, Searcher},
+    sync::Arc,
 };
 
-use crate::{dateparser::datetime::Parse, action::Direction};
+use crate::{action::Direction, dateparser::datetime::Parse};
 use bstr::{BStr, ByteSlice};
 use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
@@ -536,7 +537,6 @@ fn bin_search(s: &[u8], dt: &DateTime<Utc>) -> Result<FileOffset, TsBinSearchErr
     Ok(middle)
 }
 
-
 #[derive(PartialEq, Eq, Clone)]
 pub struct DispLine {
     file_loc: (usize, usize), // <-- [begin, end)
@@ -580,7 +580,6 @@ pub struct Home {
     // view: Vec<Cow<'mmap, str>>,
     view: Vec<DispLine>,
     // view: Vec<String>,
-
     /// Used for PGDOWN/UP.
     screen_size: Rect,
 }
@@ -605,7 +604,12 @@ impl Home {
             search_screen: TextEntry::default(),
             last_search: String::default(),
             search_visits: Vec::default(),
-            screen_size: Rect { x: 0, y: 0, width: 1000, height: 1000 },
+            screen_size: Rect {
+                x: 0,
+                y: 0,
+                width: 1000,
+                height: 1000,
+            },
         }
     }
 
@@ -669,7 +673,7 @@ impl Home {
                 prev_line_starts_at,
             );
             let prev_line = binding.first();
-            if let Some(prev_line) = prev_line { 
+            if let Some(prev_line) = prev_line {
                 self.view.pop();
                 self.view.insert(0, prev_line.clone());
                 highlight_lines(&mut self.view[..1], &self.last_search);
@@ -692,7 +696,6 @@ impl Home {
             info!("Tried to go past end of file!");
         }
 
-
         // Can swap to a linked list if really anal about it
         let lastline = self.view.last();
         let lastline = match lastline {
@@ -701,7 +704,7 @@ impl Home {
         };
         // TODO document some invariants on these values. Do they point at the newline? One before? etc.
         // Intent is for [start, end), i.e. end index points one past the last valid index.
-        let next_line_starts_at = lastline.file_loc.1;// + 1;
+        let next_line_starts_at = lastline.file_loc.1; // + 1;
         let next_line = get_visible_lines(
             self.mmap[next_line_starts_at..].as_bstr(),
             &self.filter_screen.items,
@@ -714,7 +717,7 @@ impl Home {
             return;
         }
         let first = first.unwrap();
-        self.view.remove(0);  // Technically this causes a shift of the vector but I don't care at the moment :-)
+        self.view.remove(0); // Technically this causes a shift of the vector but I don't care at the moment :-)
         self.view.push(first.clone());
         // TODO only re-highlight the newly added last line.
         let last_idx = self.view.len() - 1;
@@ -868,7 +871,7 @@ impl Home {
 
     fn move_screenful(&mut self, dir: Direction) {
         let h = self.screen_size.height;
-        for _ in 0..h+1 {
+        for _ in 0..h + 1 {
             match dir {
                 Direction::Prev => self.prev_line(),
                 Direction::Next => self.next_line(),
@@ -936,10 +939,10 @@ impl Component for Home {
             KeyCode::Char('k') => {
                 Action::CursorMove(CursorMove::OneLine(crate::action::Direction::Prev))
             }
-            KeyCode::PageUp => { 
+            KeyCode::PageUp => {
                 Action::CursorMove(CursorMove::Screenful(crate::action::Direction::Prev))
             }
-            KeyCode::PageDown => { 
+            KeyCode::PageDown => {
                 Action::CursorMove(CursorMove::Screenful(crate::action::Direction::Next))
             }
             KeyCode::Down => {
@@ -1039,7 +1042,8 @@ impl Component for Home {
         // Hardcoded list of actions which don't require a full redo:
         if action != Action::Tick
             && action != Action::CursorMove(CursorMove::OneLine(crate::action::Direction::Next))
-            && action != Action::CursorMove(CursorMove::OneLine(crate::action::Direction::Prev)) {
+            && action != Action::CursorMove(CursorMove::OneLine(crate::action::Direction::Prev))
+        {
             self.update_view();
         }
         followup_action

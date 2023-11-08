@@ -19,7 +19,7 @@ memmap = "0.7.0"
 # dateparser="0.1.7"
 lazy_static = "1.4.0"
 
-chrono = "0.4"
+chrono = "0.4.24"
 # ansi_term = "0.12.1"
 unicode-width = "0.1.5"
 bstr = "1.0.0"
@@ -57,7 +57,7 @@ tui-textarea = { git = "https://github.com/haydenflinner/tui-textarea", features
 
 [dev-dependencies]
 criterion = { version = "0.4", features = ["html_reports"] }
-chrono_tz = "0.8.4"
+chrono-tz = "0.8.4"
 
 [[bench]]
 name = "my_benchmark"

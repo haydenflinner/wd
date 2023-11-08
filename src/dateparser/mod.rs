@@ -334,7 +334,7 @@ pub fn parse_with_timezone<Tz2: TimeZone>(
 /// let local_now = Local::now().time().trunc_subsecs(0);
 /// let midnight_naive = NaiveTime::from_hms_opt(0, 0, 0).unwrap();
 /// let before_midnight_naive = NaiveTime::from_hms_opt(23, 59, 59).unwrap();
-/// let date = NaiveDate::MIN;
+/// let date = NaiveDate::parse_from_str("1992-04-26", "%Y-%m-%d").unwrap();
 ///
 /// let parsed_with_local_now = parse_with("2021-10-09", &Local, local_now, date);
 /// let parsed_with_local_midnight = parse_with("2021-10-09", &Local, midnight_naive, date);
