@@ -635,7 +635,6 @@ impl Home {
 
 
         // Can swap to a linked list if really anal about it
-        self.view.remove(0);  // Technically this causes a shift of the vector but I don't care at the moment :-)
         let lastline = self.view.last();
         let lastline = match lastline {
             Some(line) => line,
@@ -650,7 +649,13 @@ impl Home {
             600,
             next_line_starts_at,
         );
-        next_line.first().map(|x| self.view.push(x.clone()));
+        let first = next_line.first();
+        if first == None {
+            return;
+        }
+        let first = first.unwrap();
+        self.view.remove(0);  // Technically this causes a shift of the vector but I don't care at the moment :-)
+        self.view.push(first.clone());
         // TODO only re-highlight the newly added last line.
         highlight_lines(&mut self.view, &self.last_search);
         // info!("Set cursor to {}", self.byte_cursor);
