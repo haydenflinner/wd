@@ -18,6 +18,7 @@ use ratatui::{
 use regex::Regex;
 // use tracing::debug;
 use memmap::Mmap;
+use tracing::error;
 use tui_textarea::TextArea;
 // use tracing::info;
 
@@ -31,9 +32,9 @@ use crate::action::{Action, CursorMove, FilterListAction, FilterType, LineFilter
 /// Profile ratatui, it seems they're slowing down our scrolls.
 /// 7. Search interruption or asyncness.
 /// 8. 'h' highlight menu, like search but sticks around
-/// 4. Page up/down?
 /// 5. Search-caching
 ///     Probably a list of all search results ever shown ought to be fine, no human will view enough results to exhaust memory.
+///     This may be implemented as a map of line numbers to the filters which matched on that line, to facilitate quick enable/disable of filters.
 /// 6. Avoid-filter-rework
 ///      Right now when you press 'j' your filters rerun from the new cursor line. This is obviously suboptimal if you have filtered out a large portion of the file and would like to begin scrolling.
 ///      It's not that big of a deal because you can always use `g` to skip deeper into the file, but would be nice to fix this.
@@ -47,6 +48,7 @@ use crate::action::{Action, CursorMove, FilterListAction, FilterType, LineFilter
 ///  1. Add j and k for scroll down and up.#
 ///  2. Complete filter in/out
 ///  3. Add search (/)
+///  4. PGUP/DOWN
 /// 6. go-to by pressing g to bring up go menu. g again auto goes to beginning, everything else gets typed into a text box for goto purposes.
 
 #[derive(PartialEq, Eq)]
@@ -611,22 +613,75 @@ impl Home {
         // debug!("Tick");
     }
 
+    // This is a copy paste of next_line but in the opposite direction;
+    // it did not seem necessarily simpler to use one impl that constantly switched on direction.
+    pub fn prev_line(&mut self) {
+        let first_line = self.view.first();
+        let first_line = match first_line {
+            Some(first_line) => first_line,
+            None => {
+                info!("Tried to go past beginning of empty file.");
+                return;
+            }
+        };
+        // For some reason when scrolling up past the beginning of a file, we end up in a scenario where
+        // byte cursor is 1 while file loc is 0. I'm going to disable that ability, but making this assert
+        // a little more friendly just in case.
+        if first_line.file_loc.0 == 0 {
+            // Trying to scroll before beginning of file. I think scrolling before the beginning of lines that are filtered out
+            // but not displaying will still scroll depsite this.
+            return;
+        }
+        // assert!(self.byte_cursor == first_line.file_loc.0 || self.byte_cursor - 1 == first_line.file_loc.0);
+
+        // A naive copy paste of next_line to here results in prev_line moving back one file-line and not one visible line.
+        // We got lucky with next_line.
+        // We have a conundrum here, which is that seeking backwards doesn't have a parallel/inverse with forwards in our lowest function calls
+        // For example, get_visible_lines seeks forward rather than backwards, but expects to be started on the start of a line.
+        // some of this is just reality; for example our filters must be applied to a 'line' (or a 'record'!), not just an arbitrary byte stream.
+        //
+        // There are two obvious approaches in front of us.
+        //   1. Scroll back file-line by file-line until a line is visible.
+        //   2. Write a get_visible_lines_backwards.
+        // get_visible_lines is kind of a big gnarly function that I don't want to go near right now,
+        // while (1) seems straightforward.
+        // One problem lurking is that approach (1) done wrong will approach n^2 runtime with high-percentage filtering.
+        // We can avoid this by only asking it to review the freshly under-consideration file-line.
+        // We thus treat get_visible_lines as a sort of single-line filter. Perhaps it should be refactored to lift a single-line filter out of it.
+        // Also note by taking approach 1, we are totally ignoring our prior concept of 'records', which results in the following bug:
+        // When scrolling forward, the lines 'filtered-out-string\n  continued\n  continued' would all be filtered, but when scrolling backwards, not so.
+        // The fix for this is to implement something like a RecordIterator, and break get_visible_lines into more distinguishable pieces.
+        // For now, this gets the job mostly done, at least it makes scrolling up responsive in the usual simple cases.
+        let mut end_search = first_line.file_loc.0;
+        loop {
+            if self.byte_cursor == 0 {
+                return;
+            }
+            self.byte_cursor =
+                find_line_starting_before(&self.mmap, self.byte_cursor.saturating_sub(1));
+            let prev_line_starts_at = self.byte_cursor;
+            // line_allowed(&self.filter_screen.items, line) 0-thought went into not using this
+            let binding = get_visible_lines(
+                self.mmap[prev_line_starts_at..end_search].as_bstr(),
+                &self.filter_screen.items,
+                1,
+                600,
+                prev_line_starts_at,
+            );
+            let prev_line = binding.first();
+            if let Some(prev_line) = prev_line { 
+                self.view.pop();
+                self.view.insert(0, prev_line.clone());
+                highlight_lines(&mut self.view[..1], &self.last_search);
+                return;
+            }
+            end_search = prev_line_starts_at;
+        }
+    }
+
     /// Unfortunately doesn't account for the word-wrapping that ratatui does,
     /// so will skip whole lines sometimes rather than just a screen-line.
     pub fn next_line(&mut self) {
-        // let bytes_til_newline = &mmap[cursor..cursor.PG_SIZE*4]
-        // let bytes_til_newline = self
-        //     .mmap[self.byte_cursor..self.mmap.len()]
-        //     .iter()
-        //     .enumerate()
-        //     .find_map(|(index, val)| match val {
-        //         val if *val == ('\n' as u8) => Some(index),
-        //         _ => None,
-        //     })
-        //     .unwrap_or(0);
-        // // assert!(self.mmap[byte_til_newline])
-        // let byte_after_newline = min(self.mmap.len(), self.byte_cursor + bytes_til_newline + 1);
-
         if self.view.is_empty() {
             info!("Tried to go past end of visible file!");
             return;
@@ -680,19 +735,15 @@ impl Home {
         let spot = bin_search(self.mmap.as_bstr(), &dt);
         match spot {
             Ok(cursor) => self.byte_cursor = cursor,
-            Err(_) => {
-                spot.unwrap();
+            Err(tbe) => {
+                error!("{:?}", tbe);
+                // spot.unwrap();
             }
         }
     }
 
     pub fn goto_pct(&mut self, pct: f64) {
         self.byte_cursor = find_start_line_pct(&self.mmap, pct);
-    }
-
-    pub fn prev_line(&mut self) {
-        self.byte_cursor =
-            find_line_starting_before(&self.mmap, self.byte_cursor.saturating_sub(1));
     }
 
     pub fn goto_begin(&mut self) {
@@ -985,15 +1036,16 @@ impl Component for Home {
             }
             Action::Noop => {} // _ => {},
         }
-        if action != Action::Tick && action != Action::CursorMove(CursorMove::OneLine(crate::action::Direction::Next)){
+        // Hardcoded list of actions which don't require a full redo:
+        if action != Action::Tick
+            && action != Action::CursorMove(CursorMove::OneLine(crate::action::Direction::Next))
+            && action != Action::CursorMove(CursorMove::OneLine(crate::action::Direction::Prev)) {
             self.update_view();
         }
         followup_action
     }
 
     fn render(&mut self, f: &mut Frame<'_>, rect: Rect) {
-        // TODO Cache `rect`
-        // here as last_rect. If it's same as before, don't rerender. But use rect dimensions to knwo what should be visible when adding newlines.
         self.screen_size = rect;
 
         let rect = if self.show_logger {
