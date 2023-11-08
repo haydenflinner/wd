@@ -45,7 +45,7 @@
 //! use std::error::Error;
 //!
 //! fn main() -> Result<(), Box<dyn Error>> {
-//!     let parsed_in_utc = parse_with_timezone("6:15pm", &Utc)?;
+//!     let parsed_in_utc = parse_with_timezone("6:15pm", &Utc, None)?;
 //!     assert_eq!(
 //!         parsed_in_utc,
 //!         Utc::now().date().and_hms(18, 15, 0),
@@ -195,13 +195,13 @@
 /// use std::error::Error;
 ///
 /// fn main() -> Result<(), Box<dyn Error>> {
-///     let parse_with_local = Parse::new(&Local, None);
+///     let parse_with_local = Parse::new(&Local, None, None);
 ///     assert_eq!(
 ///         parse_with_local.parse("2021-06-05 06:19 PM")?,
 ///         Local.ymd(2021, 6, 5).and_hms(18, 19, 0).with_timezone(&Utc),
 ///     );
 ///
-///     let parse_with_utc = Parse::new(&Utc, None);
+///     let parse_with_utc = Parse::new(&Utc, None, None);
 ///     assert_eq!(
 ///         parse_with_utc.parse("2021-06-05 06:19 PM")?,
 ///         Utc.ymd(2021, 6, 5).and_hms(18, 19, 0),
@@ -295,19 +295,19 @@ pub fn parse(input: &str) -> Result<DateTime<Utc>> {
 /// use chrono::offset::{Local, Utc};
 /// use chrono_tz::US::Pacific;
 ///
-/// let parsed_in_local = parse_with_timezone("6:15pm", &Local).unwrap();
+/// let parsed_in_local = parse_with_timezone("6:15pm", &Local, None).unwrap();
 /// assert_eq!(
 ///     parsed_in_local,
 ///     Local::now().date().and_hms(18, 15, 0).with_timezone(&Utc),
 /// );
 ///
-/// let parsed_in_utc = parse_with_timezone("6:15pm", &Utc).unwrap();
+/// let parsed_in_utc = parse_with_timezone("6:15pm", &Utc, None).unwrap();
 /// assert_eq!(
 ///     parsed_in_utc,
 ///     Utc::now().date().and_hms(18, 15, 0),
 /// );
 ///
-/// let parsed_in_pacific = parse_with_timezone("6:15pm", &Pacific).unwrap();
+/// let parsed_in_pacific = parse_with_timezone("6:15pm", &Pacific, None).unwrap();
 /// assert_eq!(
 ///     parsed_in_pacific,
 ///     Utc::now().with_timezone(&Pacific).date().and_hms(18, 15, 0).with_timezone(&Utc),
@@ -334,12 +334,13 @@ pub fn parse_with_timezone<Tz2: TimeZone>(
 /// let local_now = Local::now().time().trunc_subsecs(0);
 /// let midnight_naive = NaiveTime::from_hms_opt(0, 0, 0).unwrap();
 /// let before_midnight_naive = NaiveTime::from_hms_opt(23, 59, 59).unwrap();
+/// let date = NaiveDate::MIN;
 ///
-/// let parsed_with_local_now = parse_with("2021-10-09", &Local, local_now);
-/// let parsed_with_local_midnight = parse_with("2021-10-09", &Local, midnight_naive);
-/// let parsed_with_local_before_midnight = parse_with("2021-10-09", &Local, before_midnight_naive);
-/// let parsed_with_utc_now = parse_with("2021-10-09", &Utc, utc_now);
-/// let parsed_with_utc_midnight = parse_with("2021-10-09", &Utc, midnight_naive);
+/// let parsed_with_local_now = parse_with("2021-10-09", &Local, local_now, date);
+/// let parsed_with_local_midnight = parse_with("2021-10-09", &Local, midnight_naive, date);
+/// let parsed_with_local_before_midnight = parse_with("2021-10-09", &Local, before_midnight_naive, date);
+/// let parsed_with_utc_now = parse_with("2021-10-09", &Utc, utc_now, date);
+/// let parsed_with_utc_midnight = parse_with("2021-10-09", &Utc, midnight_naive, date);
 ///
 /// assert_eq!(
 ///     parsed_with_local_now.unwrap(),
