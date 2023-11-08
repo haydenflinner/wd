@@ -643,7 +643,7 @@ impl Home {
         // TODO document some invariants on these values. Do they point at the newline? One before? etc.
         let next_line_starts_at = lastline.file_loc.1;// + 1;
         let next_line = get_visible_lines(
-            self.mmap[next_line_starts_at..next_line_starts_at+40000].as_bstr(),
+            self.mmap[next_line_starts_at..].as_bstr(),
             &self.filter_screen.items,
             1,
             600,
