@@ -36,14 +36,6 @@ use crate::action::{Action, CursorMove, FilterListAction, FilterType, LineFilter
 /// 5. Search-caching
 ///     Probably a list of all search results ever shown ought to be fine, no human will view enough results to exhaust memory.
 ///     This may be implemented as a map of line numbers to the filters which matched on that line, to facilitate quick enable/disable of filters.
-/// 6. Avoid-filter-rework
-///      Right now when you press 'j' your filters rerun from the new cursor line. This is obviously suboptimal if you have filtered out a large portion of the file and would like to begin scrolling.
-///      It's not that big of a deal because you can always use `g` to skip deeper into the file, but would be nice to fix this.
-///      Probably keep a 'screen' copy of a bunch of lines detected in the file, and when `j` is pressed, add one to the end.
-///      We don't pop from the beginning until running out of mem, that way pressing 'k' stays fast too.
-///      If only storing vec of slices this will probably work forever.
-///      It may also be nice if e.g. adding another filter applied recursively rather than again from scratch, so you didn't rerun all of the filters just because one was added.
-///      This isn't such a big deal because we start the search where the cursor currently is, so the screen will display soon.
 /// 9. Autoskip
 /// DONE
 ///  1. Add j and k for scroll down and up.#
