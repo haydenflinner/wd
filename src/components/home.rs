@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::{action::Direction, dateparser::datetime::Parse};
+use crate::{action::Direction, dateparser::datetime::Parse, drainrs::DrainState};
 use bstr::{BStr, ByteSlice};
 use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
@@ -574,6 +574,8 @@ pub struct Home {
     // view: Vec<String>,
     /// Used for PGDOWN/UP.
     screen_size: Rect,
+
+    drain_state: DrainState,
 }
 
 impl Home {
@@ -602,6 +604,7 @@ impl Home {
                 width: 1000,
                 height: 1000,
             },
+            drain_state: DrainState::new(),
         }
     }
 
@@ -710,6 +713,7 @@ impl Home {
         }
         let first = first.unwrap();
         self.view.remove(0); // Technically this causes a shift of the vector but I don't care at the moment :-)
+        self.drain_state
         self.view.push(first.clone());
         // TODO only re-highlight the newly added last line.
         let last_idx = self.view.len() - 1;
