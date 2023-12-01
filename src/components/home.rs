@@ -78,38 +78,72 @@ use crate::action::{Action, CursorMove, FilterListAction, FilterType, LineFilter
 // TODO add coloring and highlighting.
 // fn fmt_visible_lines(lines: Vec<Line>) -> Vec<Line> { lines }
 
+struct Screen {
+    pub view: Vec<DispLine>,
+    /// Used for PGDOWN/UP.
+    pub screen_size: Rect,
+}
+
+impl Screen {
+    pub fn new(screen_size: Rect) -> Self {
+        Self {
+            view: Vec::new(),
+            screen_size,
+        }
+    }
+
+    pub fn prepend_line(&mut self, line: DispLine) {
+        self.view.pop();
+        self.view.insert(0, line);
+    }
+
+    // This line must already be highlighted. TODO use type system for that.
+    pub fn push_line(&mut self, line: DispLine) {
+        // TODO don't always remove the first line, see what happens when press G.
+        self.view.remove(0); // Technically this causes a shift of the vector but I don't care at the moment :-)
+        self.view.push(line);
+    }
+}
+
+pub fn highlight_line(line: &mut DispLine, needle: &str) {
+    if needle.is_empty() {
+        return;
+    }
+    let orig_line = line.line.clone();
+    let line_txt = orig_line.spans[0].content.to_owned();
+    let mut searcher = needle.into_searcher(&line_txt);
+    let mut spans = Vec::new();
+    let mut last_plain = 0;
+    while let Some((start, end)) = searcher.next_match() {
+        // let spans
+        spans.push(Span {
+            content: line_txt[last_plain..start].to_owned().into(),
+            style: Style::default(),
+        });
+        spans.push(Span {
+            content: line_txt[start..end].to_owned().into(),
+            style: Style::default().bg(Color::LightGreen),
+        });
+        last_plain = end;
+    }
+    if last_plain != line_txt.len() {
+        spans.push(Span {
+            content: line_txt[last_plain..].to_owned().into(),
+            style: Style::default(),
+        });
+    }
+    line.line = Line {
+        alignment: None,
+        spans,
+    };
+}
+
 pub fn highlight_lines(lines: &mut [DispLine], needle: &str) {
     if needle.is_empty() {
         return;
     }
     for line in lines {
-        let orig_line = line.line.clone();
-        let line_txt = orig_line.spans[0].content.to_owned();
-        let mut searcher = needle.into_searcher(&line_txt);
-        let mut spans = Vec::new();
-        let mut last_plain = 0;
-        while let Some((start, end)) = searcher.next_match() {
-            // let spans
-            spans.push(Span {
-                content: line_txt[last_plain..start].to_owned().into(),
-                style: Style::default(),
-            });
-            spans.push(Span {
-                content: line_txt[start..end].to_owned().into(),
-                style: Style::default().bg(Color::LightGreen),
-            });
-            last_plain = end;
-        }
-        if last_plain != line_txt.len() {
-            spans.push(Span {
-                content: line_txt[last_plain..].to_owned().into(),
-                style: Style::default(),
-            });
-        }
-        line.line = Line {
-            alignment: None,
-            spans,
-        };
+        highlight_line(line, needle);
     }
 }
 
@@ -560,7 +594,6 @@ pub struct Home {
     byte_cursor: usize,
     today: Option<NaiveDate>,
 
-    /// TODO g to open goto menu, which offers typign in a timestamp, a % amount, or pressing g again to go to beginning.
     go_screen: GoScreen,
 
     show_filter_screen: bool,
@@ -571,13 +604,14 @@ pub struct Home {
     last_search: String,
     search_visits: Vec<usize>,
 
+    screen: Screen,
+
     /// Pre-filtered based on each action.
     // view: Vec<Cow<'mmap, str>>,
-    view: Vec<DispLine>,
+    // view: Vec<DispLine>,
     // view: Vec<String>,
     /// Used for PGDOWN/UP.
-    screen_size: Rect,
-
+    // screen_size: Rect,
     drain_state: DrainState,
 }
 
@@ -595,18 +629,16 @@ impl Home {
             show_filter_screen: false,
             filter_screen: FilterScreen::default(),
             go_screen: GoScreen::default(),
-
-            view: Vec::default(),
             show_search: false,
             search_screen: TextEntry::default(),
             last_search: String::default(),
             search_visits: Vec::default(),
-            screen_size: Rect {
+            screen: Screen::new(Rect {
                 x: 0,
                 y: 0,
                 width: 1000,
                 height: 1000,
-            },
+            }),
             drain_state: DrainState::new(),
         }
     }
@@ -618,7 +650,7 @@ impl Home {
     // This is a copy paste of next_line but in the opposite direction;
     // it did not seem necessarily simpler to use one impl that constantly switched on direction.
     pub fn prev_line(&mut self) {
-        let first_line = self.view.first();
+        let first_line = self.screen.view.first();
         let first_line = match first_line {
             Some(first_line) => first_line,
             None => {
@@ -670,11 +702,12 @@ impl Home {
                 600,
                 prev_line_starts_at,
             );
-            let prev_line = binding.first();
-            if let Some(prev_line) = prev_line {
-                self.view.pop();
-                self.view.insert(0, prev_line.clone());
-                highlight_lines(&mut self.view[..1], &self.last_search);
+            assert!(binding.len() == 1);
+            let prev_line = binding.into_iter().next();
+            if let Some(mut prev_line) = prev_line {
+                // Found a previous line that is actually visible.
+                highlight_line(&mut prev_line, &self.last_search);
+                self.screen.prepend_line(prev_line);
                 return;
             }
             end_search = prev_line_starts_at;
@@ -684,42 +717,39 @@ impl Home {
     /// Unfortunately doesn't account for the word-wrapping that ratatui does,
     /// so will skip whole lines sometimes rather than just a screen-line.
     pub fn next_line(&mut self) {
-        if self.view.is_empty() {
-            info!("Tried to go past end of visible file!");
-            return;
-        }
-        self.byte_cursor = self.view[0].file_loc.1 + 1;
+        let last_line = self.screen.view.last();
+        let last_line = match last_line {
+            Some(last_line) => last_line,
+            None => {
+                info!("Tried to go past end of visible file!");
+                return;
+            }
+        };
+        self.byte_cursor = self.screen.view[0].file_loc.1 + 1;
         if self.byte_cursor >= self.mmap.len() {
             self.byte_cursor = self.mmap.len() - 1;
             info!("Tried to go past end of file!");
         }
 
-        // Can swap to a linked list if really anal about it
-        let lastline = self.view.last();
-        let lastline = match lastline {
-            Some(line) => line,
-            None => return,
-        };
         // TODO document some invariants on these values. Do they point at the newline? One before? etc.
         // Intent is for [start, end), i.e. end index points one past the last valid index.
-        let next_line_starts_at = lastline.file_loc.1; // + 1;
-        let next_line = get_visible_lines(
+        let next_line_starts_at = last_line.file_loc.1; // + 1;
+        let next_lines = get_visible_lines(
             self.mmap[next_line_starts_at..].as_bstr(),
             &self.filter_screen.items,
             1,
             600,
             next_line_starts_at,
         );
-        let first = next_line.first();
+        let next_lines_len = next_lines.len();
+        let first = next_lines.into_iter().next();
         if first == None {
             return;
         }
-        let first = first.unwrap();
-        self.view.remove(0); // Technically this causes a shift of the vector but I don't care at the moment :-)
-        self.view.push(first.clone());
-        // TODO only re-highlight the newly added last line.
-        let last_idx = self.view.len() - 1;
-        highlight_lines(&mut self.view[last_idx..], &self.last_search);
+        assert!(next_lines_len == 1);
+        let mut first = first.unwrap();
+        highlight_line(&mut first, &self.last_search);
+        self.screen.push_line(first);
         // info!("Set cursor to {}", self.byte_cursor);
     }
 
@@ -843,15 +873,14 @@ impl Home {
     // }
 
     fn update_view(&mut self) {
-        self.view = get_visible_lines(
+        self.screen.view = get_visible_lines(
             self.mmap[self.byte_cursor..].as_bstr(),
             &self.filter_screen.items,
             200,
             600,
             self.byte_cursor,
         );
-        highlight_lines(&mut self.view, &self.last_search);
-        // &self.filter_screen.items, 1000, 1000).iter_mut().map(|s| s.line.clone()).collect();
+        highlight_lines(&mut self.screen.view, &self.last_search);
     }
 
     fn parse_filename_for_date(&self, filename: &str) -> Option<NaiveDate> {
@@ -868,7 +897,7 @@ impl Home {
     }
 
     fn move_screenful(&mut self, dir: Direction) {
-        let h = self.screen_size.height;
+        let h = self.screen.screen_size.height;
         for _ in 0..h + 1 {
             match dir {
                 Direction::Prev => self.prev_line(),
@@ -1048,7 +1077,7 @@ impl Component for Home {
     }
 
     fn render(&mut self, f: &mut Frame<'_>, rect: Rect) {
-        self.screen_size = rect;
+        self.screen.screen_size = rect;
 
         let rect = if self.show_logger {
             let chunks = Layout::default()
@@ -1098,7 +1127,7 @@ impl Component for Home {
             rect
         };
 
-        let s: Vec<_> = self.view.iter().map(|dl| dl.line.clone()).collect();
+        let s: Vec<_> = self.screen.view.iter().map(|dl| dl.line.clone()).collect();
         f.render_widget(
             Paragraph::new(s)
                 .alignment(Alignment::Left)
