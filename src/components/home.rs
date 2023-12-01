@@ -93,14 +93,17 @@ impl Screen {
     }
 
     pub fn prepend_line(&mut self, line: DispLine) {
-        self.view.pop();
+        if !(self.view.len() + 1 < self.screen_size.height.into()) {
+            self.view.pop();
+        }
         self.view.insert(0, line);
     }
 
     // This line must already be highlighted. TODO use type system for that.
     pub fn push_line(&mut self, line: DispLine) {
-        // TODO don't always remove the first line, see what happens when press G.
-        self.view.remove(0); // Technically this causes a shift of the vector but I don't care at the moment :-)
+        if !(self.view.len() + 1 < self.screen_size.height.into()) {
+            self.view.remove(0); // Technically this causes a shift of the vector but I don't care at the moment :-)
+        }
         self.view.push(line);
     }
 }
