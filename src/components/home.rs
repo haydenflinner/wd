@@ -24,54 +24,57 @@ use tui_textarea::TextArea;
 // use tracing::info;
 
 use super::{
-    filter_screen::FilterScreen, go_screen::GoScreen, logger::Logger, text_entry::TextEntry,
+    filter::{line_allowed, LineFilterResult},
+    filter_screen::FilterScreen,
+    go_screen::GoScreen,
+    logger::Logger,
+    text_entry::TextEntry,
     Component, Frame,
 };
 use crate::action::{Action, CursorMove, FilterListAction, FilterType, LineFilter};
 
-/// TODO In order:
-/// Profile ratatui, it seems they're slowing down our scrolls.
-/// 7. Search interruption or asyncness.
-/// 8. 'h' highlight menu, like search but sticks around
-/// 5. Search-caching
-///     Probably a list of all search results ever shown ought to be fine, no human will view enough results to exhaust memory.
-///     This may be implemented as a map of line numbers to the filters which matched on that line, to facilitate quick enable/disable of filters.
-/// 9. Autoskip
-/// DONE
-///  1. Add j and k for scroll down and up.#
-///  2. Complete filter in/out
-///  3. Add search (/)
-///  4. PGUP/DOWN
-/// 6. go-to by pressing g to bring up go menu. g again auto goes to beginning, everything else gets typed into a text box for goto purposes.
-
-#[derive(PartialEq, Eq)]
-enum LineFilterResult {
-    Include,
-    Exclude,
-    Indifferent,
-}
-
-fn line_allowed(filters: &Vec<LineFilter>, line: &str) -> (bool, LineFilterResult) {
-    let mut cur = LineFilterResult::Indifferent;
-    let get_active_filters = || filters.iter().filter(|f| f.enabled);
-    for filter in get_active_filters() {
-        match (line.contains(&filter.needle), filter.filter_type) {
-            (true, crate::action::FilterType::In) => cur = LineFilterResult::Include,
-            (true, crate::action::FilterType::Out) => cur = LineFilterResult::Exclude,
-            _ => continue,
-            // (false, crate::action::FilterType::In) => LineFilterResult::Indifferent,
-            // (false, crate::action::FilterType::Out) => LineFilterResult::Indifferent,
-        }
-    }
-    if cur == LineFilterResult::Indifferent
-        && get_active_filters().any(|f| f.filter_type == FilterType::In)
-    {
-        // If there are any MUST_INCLUDE lines and none of them matched, we should not print this line.
-        return (false, cur); // cur here is not depended on yet 20230623
-    }
-    (cur != LineFilterResult::Exclude, cur)
-}
-
+// TODO:
+// 7. Search interruption via CTRL+C or asyncness.
+// 8. 'h' highlight menu, like search but sticks around
+// 5. Search-caching
+//     Probably a list of all search results ever shown ought to be fine, no human will view enough results to exhaust memory.
+//     This may be implemented as a map of line numbers to the filters which matched on that line, to facilitate quick enable/disable of filters.
+// 9. Autoskip based on drain algorithm
+// 10. Autohighlight like the newfound tool, things like IPs, numbers, WARN, etc.
+// DONE
+//  1. Add j and k for scroll down and up.#
+//  2. Complete filter in/out
+//  3. Add search (/)
+//  4. PGUP/DOWN
+// 6. go-to by pressing g to bring up go menu. g again auto goes to beginning, everything else gets typed into a text box for goto purposes.
+//
+// wd's goal is to use minimal resources at all times. Only do what is asked.
+// That means no loading the whole file into memory an indexing unless the user asks for it
+//   (and probably with setting io priorities to low when we do it!)
+// And the computational part of impl is primarily a single non-async thread at the moment.
+//
+// wd's internal model processes the log file in the following sequence:
+//   file mmap -- raw bytes of the underlying file, mmapped into memory
+//     |--> record parsing -- a log is a series of records, which are basically new-line delimited strings (with not-permanently-specified-exceptions)
+//       |--> record filtering -- filter these records based on their contents and user-provided in/out requirements
+//         |--> display -- apply highlighting/custom formatting and then line wrapping for display to the screen.
+//
+//     |--> search -- right now, uses stdlib searching since we only support raw strings. to support regex, use ripgrep.
+//             luckily, most desired regexes so far have been trivially represented as a combo of simple filters.
+//             Note that upcoming Drain integration will likely also reduce the need for regex.
+//
+// There are thus a few levels of abstraction that any given feature could operate at.
+// For example, pressing 'j'  operates basically at the display level, since we must know where lines wrapped for
+// display to know what the user meant by scrolling to the next line.
+// Or, searching works mostly at the file-level, to avoid unnecessary performance overhead of record parsing/filtering.
+// To some extent, these things relate to each other though, since once we have parsed enough of the file for display,
+// there is no need to continue parsing/filtering.
+//
+// State stored is:
+// mmap - what it says on the tin.
+// record parsing -- cache all previously recognized record locations [start_byte, end_byte)
+// record filtering -- we should cache the records matches to filters, but we don't.
+// display -- represented as a list of displayed lines.
 // TODO add coloring and highlighting.
 // fn fmt_visible_lines(lines: Vec<Line>) -> Vec<Line> { lines }
 
@@ -713,7 +716,6 @@ impl Home {
         }
         let first = first.unwrap();
         self.view.remove(0); // Technically this causes a shift of the vector but I don't care at the moment :-)
-        self.drain_state
         self.view.push(first.clone());
         // TODO only re-highlight the newly added last line.
         let last_idx = self.view.len() - 1;
@@ -1051,8 +1053,6 @@ impl Component for Home {
         let rect = if self.show_logger {
             let chunks = Layout::default()
                 .direction(ratatui::layout::Direction::Vertical)
-                // TODO Very slow scrolling with the log screen closed, but fast with it open.
-                // I guess this means tui is slowing us down? But can't profile.
                 .constraints([Constraint::Percentage(10), Constraint::Percentage(90)])
                 .split(rect);
             self.logger.render(f, chunks[1]);
@@ -1098,27 +1098,12 @@ impl Component for Home {
             rect
         };
 
-        // let s = get_visible_lines(self.mmap.as_bstr(), vec!(), rect.height*10, rect.width*10);
-        // let s = s.join("\n");
-        // info!("{}", s);
-        // let os = format!("Press j or k to increment or decrement.\n\nCounter: {}", self.counter);
-        // let s = self.get_view(rect);
-        // let s: String = self.view.iter().map(|l| l.line.clone()).intersperse("\n".to_string()).collect();
         let s: Vec<_> = self.view.iter().map(|dl| dl.line.clone()).collect();
         f.render_widget(
             Paragraph::new(s)
                 .alignment(Alignment::Left)
                 .wrap(Wrap { trim: false })
-                // .wrap(Wrap::None)
-                // .block(
-                //   Block::default()
-                //     .title("Template")
-                //     .title_alignment(Alignment::Center)
-                //     .borders(Borders::ALL)
-                //     .border_type(BorderType::Rounded),
-                // )
                 .style(Style::default()),
-            // .alignment(Alignment::Center),
             rect,
         )
     }

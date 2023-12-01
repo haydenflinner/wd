@@ -11,6 +11,7 @@ use crate::{
     event::Event,
 };
 
+pub(crate) mod filter;
 pub mod filter_screen;
 pub mod go_screen;
 pub mod home;
