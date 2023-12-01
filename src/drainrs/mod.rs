@@ -72,20 +72,25 @@ pub struct ParseTree {
 
 impl ParseTree {
     pub fn new() -> Self {
-        Self { root: TreeRoot::default(), next_cluster_id: 0 }
+        Self {
+            root: TreeRoot::default(),
+            next_cluster_id: 0,
+        }
     }
 }
 
-pub struct DrainState { 
+#[derive(Default)]
+pub struct DrainState {
     parse_tree: ParseTree,
 }
 
 impl DrainState {
-    pub fn new() -> Self { 
-        Self { parse_tree: ParseTree::new() }
+    pub fn new() -> Self {
+        Self {
+            parse_tree: ParseTree::new(),
+        }
     }
 }
-
 
 fn zip_tokens_and_template<'c>(
     templatetokens: &[OwnedLogTemplateItem],
@@ -218,6 +223,10 @@ pub enum ParseError {
     #[error("couldn't parse line with user defined template, multiline log msg?")]
     NoTokensInRecord,
 }
+
+// TODO Tech debt:
+// the iterator impl is dumb I think, callbacks suck.
+// use i32/64 something rather than usize.
 
 /// For each log record, contains template_id the record belongs to, and `values` used to create the record.
 #[derive(Debug)]
@@ -488,6 +497,10 @@ fn add_seq_to_prefix_tree<'a>(
     *num_clusters += 1;
     debug!("Adding seq {} to tree: {:?}", clust_id, tokens);
     let token_count = tokens.len();
+    if token_count < 2 {
+        println!("tokens: {:?}", tokens);
+        // tokens: [Token("03/22/2022"), Token("08:51:01"), Token("INFO"), Token(":.main:"), Token("***************"), Token("RSVP"), Token("Agent"), Token("started"), Token("***************")]
+    }
     assert!(token_count >= 2);
     let mut cur_node = root.entry(token_count).or_insert_with(|| {
         GraphNodeContents::MiddleNode(MiddleNode {
@@ -750,5 +763,71 @@ pub fn print_log(filename: &str, actually_print: bool) {
         if !rpi.next(handle) {
             break;
         }
+    }
+}
+
+#[derive(Default)]
+pub struct RecordParser {
+    state: DrainState,
+    pub templates: Vec<String>,
+}
+
+pub enum RecordParsedResult<'a> {
+    NewTemplate(RecordParsed<'a>),
+    RecordParsed(RecordParsed<'a>),
+    ParseError(ParseError),
+}
+
+impl RecordParser {
+    /// Handles storing templates in a vector for you, passes through the rest.
+    pub fn parse_record<'a>(&'a mut self, record: &'a str) -> RecordParsedResult {
+        let mut result = None;
+        let mut new_template = false;
+
+        let mut rpi = RecordsParsedIter::from(&record, &mut self.state.parse_tree);
+        loop {
+            let handle = |record| {
+                match record {
+                    RecordsParsedResult::NewTemplate(template) => {
+                        self.templates.push(
+                            template
+                                .template
+                                .iter()
+                                .map(|t| t.to_string())
+                                .intersperse(" ".to_string())
+                                .collect::<String>(),
+                        );
+                        new_template = true;
+                        // handle_parse(&template_names, &template.first_parse);
+                        true
+                    }
+                    RecordsParsedResult::RecordParsed(rp) => {
+                        if new_template {
+                            result = Some(RecordParsedResult::NewTemplate(rp));
+                        } else {
+                            result = Some(RecordParsedResult::RecordParsed(rp));
+                        }
+                        true
+                    }
+
+                    RecordsParsedResult::ParseError(e) => {
+                        result = Some(RecordParsedResult::ParseError(e));
+                        false
+                    }
+                    RecordsParsedResult::UnparsedLine(line) => {
+                        panic!("Shouldnt happen in a one-line case.");
+                    }
+                    // Don't need to pass this through.
+                    RecordsParsedResult::Done => {
+                        assert!(result.is_some());
+                        true
+                    }
+                }
+            };
+            if !rpi.next(handle) {
+                break;
+            }
+        }
+        return result.unwrap();
     }
 }

@@ -1,15 +1,17 @@
 use std::{
     borrow::Cow,
     cmp::{max, min, Ordering},
+    collections::{HashMap, HashSet},
     str::pattern::{Pattern, Searcher},
     sync::Arc,
 };
 
-use crate::{action::Direction, dateparser::datetime::Parse, drainrs::DrainState};
+use crate::{action::Direction, dateparser::datetime::Parse, drainrs::RecordParser};
 use bstr::{BStr, ByteSlice};
 use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
-use log::{debug, info, warn};
+// use log::{debug, info, warn}; when unit testing, use these?
+use memmap::Mmap;
 use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Style},
@@ -17,11 +19,8 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Paragraph, Wrap},
 };
 use regex::Regex;
-// use tracing::debug;
-use memmap::Mmap;
-use tracing::error;
+use tracing::{debug, error, info};
 use tui_textarea::TextArea;
-// use tracing::info;
 
 use super::{
     filter::{line_allowed, LineFilterResult},
@@ -34,6 +33,7 @@ use super::{
 use crate::action::{Action, CursorMove, FilterListAction, FilterType, LineFilter};
 
 // TODO:
+// 11. Fix CTRL+C not working when the thing is really going
 // 7. Search interruption via CTRL+C or asyncness.
 // 8. 'h' highlight menu, like search but sticks around
 // 5. Search-caching
@@ -195,7 +195,7 @@ pub fn get_visible_lines(
         };
         if should_print {
             lines.push(DispLine {
-                file_loc: (offset_into_big + line_start, offset_into_big + ending_index),
+                file_loc: FileLoc(offset_into_big + line_start, offset_into_big + ending_index),
                 line: line.into(),
             });
             *displayed_rows += rows_for_this_line + 1;
@@ -571,7 +571,7 @@ fn bin_search(s: &[u8], dt: &DateTime<Utc>) -> Result<FileOffset, TsBinSearchErr
 
 #[derive(PartialEq, Eq, Clone)]
 pub struct DispLine {
-    file_loc: (usize, usize), // <-- [begin, end)
+    file_loc: FileLoc, // <-- [begin, end)
     // line: String,
     line: ratatui::text::Line<'static>,
 }
@@ -583,6 +583,9 @@ pub struct DispLine {
 //     (start, end)
 //   }
 // }
+
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+struct FileLoc(usize, usize);
 
 pub struct Home {
     pub is_running: bool,
@@ -615,7 +618,8 @@ pub struct Home {
     // view: Vec<String>,
     /// Used for PGDOWN/UP.
     // screen_size: Rect,
-    drain_state: DrainState,
+    drain_parsed: HashMap<FileLoc, i32>,
+    drain_parser: RecordParser,
 }
 
 impl Home {
@@ -642,7 +646,8 @@ impl Home {
                 width: 1000,
                 height: 1000,
             }),
-            drain_state: DrainState::new(),
+            drain_parsed: HashMap::new(),
+            drain_parser: RecordParser::default(),
         }
     }
 
@@ -719,19 +724,21 @@ impl Home {
 
     /// Unfortunately doesn't account for the word-wrapping that ratatui does,
     /// so will skip whole lines sometimes rather than just a screen-line.
-    pub fn next_line(&mut self) {
+    /// Returns if progress was made.
+    pub fn next_line(&mut self) -> bool {
         let last_line = self.screen.view.last();
         let last_line = match last_line {
             Some(last_line) => last_line,
             None => {
                 info!("Tried to go past end of visible file!");
-                return;
+                return false;
             }
         };
         self.byte_cursor = self.screen.view[0].file_loc.1 + 1;
         if self.byte_cursor >= self.mmap.len() {
             self.byte_cursor = self.mmap.len() - 1;
             info!("Tried to go past end of file!");
+            return false;
         }
 
         // TODO document some invariants on these values. Do they point at the newline? One before? etc.
@@ -747,12 +754,13 @@ impl Home {
         let next_lines_len = next_lines.len();
         let first = next_lines.into_iter().next();
         if first == None {
-            return;
+            return false;
         }
         assert!(next_lines_len == 1);
         let mut first = first.unwrap();
         highlight_line(&mut first, &self.last_search);
         self.screen.push_line(first);
+        return true;
         // info!("Set cursor to {}", self.byte_cursor);
     }
 
@@ -818,7 +826,10 @@ impl Home {
                     }
                     self.byte_cursor = maybe_cursor;
                     self.search_visits.push(self.byte_cursor);
-                    info!("Found line starting at {}", maybe_cursor);
+                    info!(
+                        "Found result at idx {}, found line starting at {}",
+                        idx, maybe_cursor
+                    );
                     return;
                     // https://github.com/rhysd/tui-textarea/blob/main/src/highlight.rs#L101
                     // Great reference for using Spans to highlight lines.
@@ -904,7 +915,86 @@ impl Home {
         for _ in 0..h + 1 {
             match dir {
                 Direction::Prev => self.prev_line(),
-                Direction::Next => self.next_line(),
+                Direction::Next => {
+                    self.next_line();
+                }
+            }
+        }
+    }
+
+    fn autoskip(&mut self) {
+        // Parse what's on screen, then skip until we see a new template on-screen.
+        // Perhaps grey out what's old vs new?
+        // Here our abstractions first present a problem.
+        // I'd like to just do next_line and then pass that line into
+        // drain. But this means we will be highlighting lines that may never be shown.
+        // The most obvious approach at the moment is to defer highlighting until
+        // the update step is almost done, then come back and do it in one pass.
+        // This will also speed it up for PGUP/DOWN. For now, it's fine as-is.
+        let mut templates_on_screen: HashSet<i32> = HashSet::new();
+        for line in &self.screen.view {
+            let entry = self.drain_parsed.entry(line.file_loc);
+            match entry {
+                std::collections::hash_map::Entry::Occupied(entry) => {
+                    templates_on_screen.insert(*entry.get());
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    let raw_line = &self.mmap[line.file_loc.0..line.file_loc.1].to_str_lossy();
+                    let template_id = match self.drain_parser.parse_record(raw_line) {
+                        crate::drainrs::RecordParsedResult::NewTemplate(rp) => rp.template_id,
+                        crate::drainrs::RecordParsedResult::RecordParsed(rp) => rp.template_id,
+                        crate::drainrs::RecordParsedResult::ParseError(e) => {
+                            error!("{}", e);
+                            continue;
+                        }
+                    };
+                    let small_tid = i32::try_from(template_id).unwrap();
+                    templates_on_screen.insert(small_tid);
+                    entry.insert(small_tid);
+                }
+            }
+        }
+
+        for _ in [0..1_000] {
+            // Now, skip until we get a line we haven't seen before.
+            if !self.next_line() {
+                info!("Reached end of file during autoskip.");
+                return;
+            }
+            let line = self.screen.view.last();
+            let line = match line {
+                Some(line) => line,
+                None => return,
+            };
+            let raw_line = &self.mmap[line.file_loc.0..line.file_loc.1].to_str_lossy();
+            let template_id = match self.drain_parser.parse_record(raw_line) {
+                crate::drainrs::RecordParsedResult::NewTemplate(rp) => rp.template_id,
+                crate::drainrs::RecordParsedResult::RecordParsed(rp) => rp.template_id,
+                crate::drainrs::RecordParsedResult::ParseError(e) => {
+                    error!("{}", e);
+                    continue;
+                }
+            };
+            let small_tid = i32::try_from(template_id).unwrap();
+
+            let entry = self.drain_parsed.entry(line.file_loc);
+            match entry {
+                std::collections::hash_map::Entry::Occupied(entry) => {
+                    debug!(
+                        "Skipping line {:?} with template: {}",
+                        line.file_loc, self.drain_parser.templates[template_id]
+                    );
+                    continue;
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    // Found one!
+                    entry.insert(small_tid);
+                    info!(
+                        "Found line with new template: {}",
+                        self.drain_parser.templates[template_id]
+                    );
+                    return;
+                }
             }
         }
     }
@@ -983,6 +1073,7 @@ impl Component for Home {
             KeyCode::Char('n') => Action::RepeatSearch(crate::action::Direction::Next),
             KeyCode::Char('N') => Action::RepeatSearch(crate::action::Direction::Prev),
             KeyCode::Char('f') => Action::FilterListAction(FilterListAction::OpenFilterScreen),
+            KeyCode::Char('s') => Action::AutoSkip,
             _ => Action::Tick,
         }
     }
@@ -1007,7 +1098,9 @@ impl Component for Home {
             Action::CursorMove(cm) => match cm {
                 CursorMove::OneLine(dir) => match dir {
                     crate::action::Direction::Prev => self.prev_line(),
-                    crate::action::Direction::Next => self.next_line(),
+                    crate::action::Direction::Next => {
+                        self.next_line();
+                    }
                 },
                 CursorMove::End(dir) => match dir {
                     crate::action::Direction::Prev => self.goto_begin(),
@@ -1039,6 +1132,7 @@ impl Component for Home {
                     }
                 }
             }
+            Action::AutoSkip => self.autoskip(),
             Action::TextEntry(_) => {
                 if self.show_filter_screen {
                     self.filter_screen.dispatch(action);
@@ -1085,7 +1179,7 @@ impl Component for Home {
         let rect = if self.show_logger {
             let chunks = Layout::default()
                 .direction(ratatui::layout::Direction::Vertical)
-                .constraints([Constraint::Percentage(10), Constraint::Percentage(90)])
+                .constraints([Constraint::Percentage(10), Constraint::Percentage(70)])
                 .split(rect);
             self.logger.render(f, chunks[1]);
             chunks[0]

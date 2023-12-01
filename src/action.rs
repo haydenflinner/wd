@@ -102,6 +102,9 @@ pub enum Action {
     ConfirmTextEntry,
     TextEntry(KeyEvent),
 
+    /// Use drainrs to autoskip what's on screen.
+    AutoSkip,
+
     Noop,
 }
 
