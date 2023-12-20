@@ -498,8 +498,18 @@ fn add_seq_to_prefix_tree<'a>(
     debug!("Adding seq {} to tree: {:?}", clust_id, tokens);
     let token_count = tokens.len();
     if token_count < 2 {
-        println!("tokens: {:?}", tokens);
         // tokens: [Token("03/22/2022"), Token("08:51:01"), Token("INFO"), Token(":.main:"), Token("***************"), Token("RSVP"), Token("Agent"), Token("started"), Token("***************")]
+        let entry = root.entry(token_count);
+        let entry = entry.or_insert_with(|| {
+            GraphNodeContents::LeafNode(vec![LogCluster {
+                template: vec![OwnedLogTemplateItem::Value],
+                cluster_id: clust_id,
+            }])
+        });
+        return match entry {
+            GraphNodeContents::MiddleNode(_) => unreachable!(),
+            GraphNodeContents::LeafNode(ln) => &ln[ln.len() - 1],
+        };
     }
     assert!(token_count >= 2);
     let mut cur_node = root.entry(token_count).or_insert_with(|| {
@@ -786,8 +796,8 @@ impl RecordParser {
 
         let mut rpi = RecordsParsedIter::from(&record, &mut self.state.parse_tree);
         loop {
-            let handle = |record| {
-                match record {
+            let handle = |parsedrecord| {
+                match parsedrecord {
                     RecordsParsedResult::NewTemplate(template) => {
                         self.templates.push(
                             template
@@ -819,8 +829,8 @@ impl RecordParser {
                     }
                     // Don't need to pass this through.
                     RecordsParsedResult::Done => {
-                        assert!(result.is_some());
-                        true
+                        assert!(result.is_some(), "The line {:?}'", record);
+                        false
                     }
                 }
             };
