@@ -67,7 +67,7 @@ impl App {
                 let mut t = tui.lock().await;
                 t.terminal
                     .draw(|f| {
-                        h.render(f, f.size());
+                        h.render(f, f.area());
                     })
                     .unwrap();
                 if !sent {

@@ -18,6 +18,8 @@ pub mod home;
 pub mod logger;
 pub mod text_entry;
 
+#[allow(async_fn_in_trait)]
+
 pub trait Component {
     // I wanted to add an argument to this but it will be a more involved refactor then i want to take at this moment.
     // At this time it's not clear why init is a property of the Component trait if there's never a call through the trait to it.
