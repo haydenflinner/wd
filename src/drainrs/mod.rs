@@ -50,7 +50,7 @@
 //! We have preliminary support for masking but it's not configurable from outside of the class and the user interface
 //! to it is not yet defined.
 
-use std::{collections::hash_map::RawEntryMut, fmt};
+use std::fmt;
 
 use borrowme::borrowme;
 use json_in_type::list::ToJSONList;
@@ -272,7 +272,6 @@ pub struct RecordsParsedIter<'a, 'b: 'a> {
 }
 
 impl<'a, 'b> RecordsParsedIter<'a, 'b> {
-    type Item = RecordsParsedResult<'a>;
 
     pub fn from(
         input: &'a str,
@@ -385,13 +384,13 @@ impl<'a, 'b> RecordsParsedIter<'a, 'b> {
             .unwrap();
             self.parsed.clear();
             zip_tokens_and_template(&match_cluster.template, &tokens, &mut self.parsed);
-            callback(Self::Item::NewTemplate(NewTemplate {
+            callback(RecordsParsedResult::NewTemplate(NewTemplate {
                 // We can't return this because it would imply that our mutable self borrow in Self::next outlives 'a.
                 // We could make this less-copy by using a streaming-iterator or just taking callbacks to call.
                 // Unclear which would be more idiomatic, so leaving it alone for now.
                 template: match_cluster.template.to_vec(),
             }));
-            return callback(Self::Item::RecordParsed(RecordParsed {
+            return callback(RecordsParsedResult::RecordParsed(RecordParsed {
                 values: self.parsed.to_vec(),
                 template_id: match_cluster.cluster_id,
             }));
@@ -403,7 +402,7 @@ impl<'a, 'b> RecordsParsedIter<'a, 'b> {
         // since can't figure out how to do that without .collect().
         self.parsed.clear();
         zip_tokens_and_template(&match_cluster.template, &tokens, &mut self.parsed);
-        return callback(Self::Item::RecordParsed(RecordParsed {
+        return callback(RecordsParsedResult::RecordParsed(RecordParsed {
             values: self.parsed.to_vec(),
             template_id: match_cluster.cluster_id,
         }));
@@ -478,12 +477,6 @@ fn fast_match<'a>(logclusts: &'a Vec<LogCluster>, tokens: &[TokenParse]) -> Opti
     }
 }
 
-fn compute_hash<K: Hash + ?Sized, S: BuildHasher>(hash_builder: &S, key: &K) -> u64 {
-    use core::hash::Hasher;
-    let mut state = hash_builder.build_hasher();
-    key.hash(&mut state);
-    state.finish()
-}
 
 const MAX_DEPTH: usize = 4;
 const MAX_CHILDREN: usize = 100;
@@ -540,65 +533,31 @@ fn add_seq_to_prefix_tree<'a>(
                     TokenParse::MaskedValue(_v) => {
                         middle
                             .child_d
-                            .raw_entry_mut()
-                            .from_key(&OwnedLogTemplateItem::Value)
-                            .or_insert_with(|| (OwnedLogTemplateItem::Value, inserter()))
-                            .1
+                            .entry(OwnedLogTemplateItem::Value)
+                            .or_insert_with(inserter)
                     }
                     // https://stackoverflow.com/questions/36480845/how-to-avoid-temporary-allocations-when-using-a-complex-key-for-a-hashmap
                     // https://internals.rust-lang.org/t/pre-rfc-abandonning-morals-in-the-name-of-performance-the-raw-entry-api/70431
                     // It's possible that and_modify and _or_insert might be usd here but we really change at runtime to another entry
                     // syntactically this is ugly but whatever. we don't copy the strings anymore 8)
                     TokenParse::Token(token) => {
-                        let perfect_match_key = LogTemplateItem::StaticToken(token);
-                        let hash = compute_hash(middle.child_d.hasher(), &perfect_match_key);
-                        // let found_node = middle.child_d.contains_key(&perfect_match_key);
-                        let entry = middle
-                            .child_d
-                            .raw_entry()
-                            .from_hash(hash, |q| borrowme::borrow(q) == perfect_match_key);
-                        match entry {
-                            Some(_) => {
-                                // don't borrow mutably until we know it's there
-                                let entry = middle
-                                    .child_d
-                                    .raw_entry_mut()
-                                    .from_hash(hash, |q| borrowme::borrow(q) == perfect_match_key);
-                                match entry {
-                                    RawEntryMut::Occupied(view) => view.into_mut(),
-                                    RawEntryMut::Vacant(_) => unreachable!(),
-                                }
-                            }
-                            None => {
-                                // At first glance, skipping over '*' entries here is unintuitive. However, if we've made it to
-                                // adding, then there was not a satisfactory match in the tree already. So we'll copy the original
-                                // algo and make a new node even if there is already a star here, as long as no numbers.
-                                // if self.parametrize_numeric_tokens
-                                // If it's a numerical token, take the * path.
-                                if has_numbers(token) || num_children >= MAX_CHILDREN {
-                                    middle
-                                        .child_d
-                                        .entry(OwnedLogTemplateItem::Value)
-                                        .or_insert_with(inserter)
-                                } else {
-                                    // It's not a numerical token, and there is room (maxChildren), add it.
-                                    middle
-                                        .child_d
-                                        .raw_entry_mut()
-                                        .from_hash(hash, |q| {
-                                            borrowme::borrow(q) == perfect_match_key
-                                        })
-                                        .or_insert_with(|| {
-                                            (
-                                                OwnedLogTemplateItem::StaticToken(
-                                                    token.to_string(),
-                                                ),
-                                                inserter(),
-                                            )
-                                        })
-                                        .1
-                                }
-                            }
+                        let perfect_match_key = OwnedLogTemplateItem::StaticToken(token.to_string());
+                        // At first glance, skipping over '*' entries here is unintuitive. However, if we've made it to
+                        // adding, then there was not a satisfactory match in the tree already. So we'll copy the original
+                        // algo and make a new node even if there is already a star here, as long as no numbers.
+                        // if self.parametrize_numeric_tokens
+                        // If it's a numerical token, take the * path.
+                        if has_numbers(token) || num_children >= MAX_CHILDREN {
+                            middle
+                                .child_d
+                                .entry(OwnedLogTemplateItem::Value)
+                                .or_insert_with(inserter)
+                        } else {
+                            // It's not a numerical token, and there is room (maxChildren), add it.
+                            middle
+                                .child_d
+                                .entry(perfect_match_key)
+                                .or_insert_with(inserter)
                         }
                     }
                 }
@@ -669,16 +628,10 @@ fn tree_search<'a>(root: &'a TreeRoot, tokens: &[TokenParse]) -> Option<&'a LogC
             }
             TokenParse::Token(token) => {
                 // Actually walking to next child, look for the token, or a wildcard, or fail.
-                let key = LogTemplateItem::StaticToken(token);
-                let hash = compute_hash(middle.child_d.hasher(), &key);
-                let entry = middle
-                    .child_d
-                    .raw_entry()
-                    .from_hash(hash, |q| borrowme::borrow(q) == key);
-                let maybe_next = entry;
-                // let maybe_next = middle.child_d.get(&LogTemplateItem::StaticToken(token));
+                let key = OwnedLogTemplateItem::StaticToken(token.to_string());
+                let maybe_next = middle.child_d.get(&key);
                 if let Some(next) = maybe_next {
-                    cur_node = next.1;
+                    cur_node = next;
                 } else if let Some(wildcard) = middle.child_d.get(&OwnedLogTemplateItem::Value) {
                     cur_node = wildcard;
                 } else {
