@@ -5,6 +5,7 @@ use chrono::Local;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use memmap::MmapOptions;
 use wd::components::home::get_visible_lines;
+use wd::dateparser;
 
 fn criterion_benchmark(c: &mut Criterion) {
     let file = File::open("./hugefile.txt").unwrap();
@@ -20,11 +21,11 @@ fn criterion_benchmark(c: &mut Criterion) {
     let s = "04/04/1997 12:04:01";
     // 40GB * (1.7microseconds / 311kb) ~= 200ms for a 40GB file ignoring cache misses, good enough.
     c.bench_function("dateparser generic", |b| {
-        b.iter(|| dateparser::parse_with_timezone(black_box(s), &Local))
+        b.iter(|| dateparser::parse_with_timezone(black_box(s), &Local, None))
     });
     // 67ns to parse the epoch timestamp though, dang, must be nice.
     c.bench_function("dateparser generic epoch", |b| {
-        b.iter(|| dateparser::parse_with_timezone(black_box("1687208330"), &Local))
+        b.iter(|| dateparser::parse_with_timezone(black_box("1687208330"), &Local, None))
     });
 }
 
