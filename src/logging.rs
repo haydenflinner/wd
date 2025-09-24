@@ -32,7 +32,7 @@ pub fn initialize_logging() -> Result<()> {
         .with_filter(EnvFilter::from_default_env());
     tracing_subscriber::registry()
         .with(file_subscriber)
-        .with(tui_logger::tracing_subscriber_layer())
+        .with(tui_logger::TuiTracingSubscriberLayer)
         .init();
     let default_level = std::env::var("RUST_LOG").map_or(log::LevelFilter::Info, |val| {
         match val.to_lowercase().as_str() {
