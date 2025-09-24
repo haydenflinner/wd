@@ -136,8 +136,9 @@ pub fn highlight_line(line: &mut DispLine, needle: &str) {
         });
     }
     line.line = Line {
-        alignment: None,
         spans,
+        alignment: None,
+        style: Style::default(),
     };
 }
 

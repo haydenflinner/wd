@@ -50,7 +50,7 @@ impl<'a> Component for TextEntry<'a> {
         match key.code {
             KeyCode::Enter => Action::ConfirmTextEntry,
             KeyCode::Esc => Action::CloseTextEntry,
-            keycode => Action::TextEntry(key),
+            _ => Action::TextEntry(key),
             // _ => { self.textarea.input(key); Action::Tick },
             // _ => { self.textarea.withinput(key); Action::Tick },
             // TODO Send Key Action
@@ -87,7 +87,7 @@ impl<'a> Component for TextEntry<'a> {
             None => panic!("&a isn't a B!")
         };
         */
-        f.render_widget(self.textarea.widget(), rect);
+        f.render_widget(&self.textarea, rect);
         // f.render_widget(self.textarea.widget(), rect);
         // f.render_stateful_widget(l, rect, &mut self.state);
     }

@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Local, Utc};
-use crossterm::event::KeyEvent;
+// use crossterm::event::KeyEvent;
+use ratatui::crossterm::event::KeyEvent;
 use env_logger::filter::Filter;
 use futures::{FutureExt, StreamExt};
 use tokio::sync::mpsc;

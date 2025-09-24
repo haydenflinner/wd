@@ -4,7 +4,7 @@ use anyhow::Result;
 use crossterm::event::{KeyEvent, MouseEvent};
 use ratatui::{backend::CrosstermBackend, layout::Rect, Frame as TuiFrame};
 
-pub type Frame<'a> = TuiFrame<'a, CrosstermBackend<Stdout>>;
+pub type Frame<'a> = TuiFrame<'a>;
 
 use crate::{
     action::{Action, ActionHandler},
