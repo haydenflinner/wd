@@ -464,8 +464,9 @@ mod tests {
         assert_eq!(
             bin_search(
                 LINES.as_bytes(),
-                &Local
-                    .datetime_from_str("2022-03-22T08:51:08", "%Y-%m-%dT%H:%M:%S")
+                &chrono::NaiveDateTime::parse_from_str("2022-03-22T08:51:08", "%Y-%m-%dT%H:%M:%S")
+                    .unwrap()
+                    .and_local_timezone(Local)
                     .unwrap()
                     .with_timezone(&Utc)
             )
@@ -479,8 +480,9 @@ mod tests {
         assert_eq!(
             bin_search(
                 LINES.as_bytes(),
-                &Local
-                    .datetime_from_str("2022-03-22T08:51:07", "%Y-%m-%dT%H:%M:%S")
+                &chrono::NaiveDateTime::parse_from_str("2022-03-22T08:51:07", "%Y-%m-%dT%H:%M:%S")
+                    .unwrap()
+                    .and_local_timezone(Local)
                     .unwrap()
                     .with_timezone(&Utc)
             )
@@ -495,9 +497,10 @@ mod tests {
         assert_eq!(
             bin_search(
                 LINES.as_bytes(),
-                &Local
-                    .datetime_from_str("2022-03-22T08:51:09", "%Y-%m-%dT%H:%M:%S")
+                &chrono::NaiveDateTime::parse_from_str("2022-03-22T08:51:09", "%Y-%m-%dT%H:%M:%S")
                     // &DateTime::<FixedOffset>::parse_from_rfc3339("2022-03-22T08:51:09Z")
+                    .unwrap()
+                    .and_local_timezone(Local)
                     .unwrap()
                     .with_timezone(&Utc)
             )
@@ -511,8 +514,9 @@ mod tests {
         assert_eq!(
             bin_search(
                 LINES.as_bytes(),
-                &Local
-                    .datetime_from_str("2022-03-22T08:51:00", "%Y-%m-%dT%H:%M:%S")
+                &chrono::NaiveDateTime::parse_from_str("2022-03-22T08:51:00", "%Y-%m-%dT%H:%M:%S")
+                    .unwrap()
+                    .and_local_timezone(Local)
                     .unwrap()
                     .with_timezone(&Utc)
             )

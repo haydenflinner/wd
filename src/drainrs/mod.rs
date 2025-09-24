@@ -743,7 +743,7 @@ pub enum RecordParsedResult<'a> {
 
 impl RecordParser {
     /// Handles storing templates in a vector for you, passes through the rest.
-    pub fn parse_record<'a>(&'a mut self, record: &'a str) -> RecordParsedResult {
+    pub fn parse_record<'a>(&'a mut self, record: &'a str) -> RecordParsedResult<'a> {
         let mut result = None;
         let mut new_template = false;
 
