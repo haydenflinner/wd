@@ -748,6 +748,7 @@ impl Home {
 
         // TODO document some invariants on these values. Do they point at the newline? One before? etc.
         // Intent is for [start, end), i.e. end index points one past the last valid index.
+        // Ropey makes some guarantees on this that we can probably use.
         let next_line_starts_at = last_line.file_loc.1; // + 1;
         let next_lines = get_visible_lines(
             self.mmap[next_line_starts_at..].as_bstr(),
