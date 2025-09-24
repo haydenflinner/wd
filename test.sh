@@ -1,3 +1,3 @@
 #!/bin/bash
 
-cargo run hugefile.txt
+cargo run -- hugefile.txt
